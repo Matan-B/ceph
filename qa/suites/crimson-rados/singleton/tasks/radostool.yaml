@@ -23,12 +23,14 @@ tasks:
       - sudo ceph config set mgr mgr_pool false --force
     log-ignorelist:
     - but it is still running
+    - oldest one blocked for 
     - had wrong client addr
     - had wrong cluster addr
     - reached quota
     - overall HEALTH_
     - \(POOL_FULL\)
     - \(POOL_APP_NOT_ENABLED\)
+
 - workunit:
     clients:
       all:
