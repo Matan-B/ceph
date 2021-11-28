@@ -30,6 +30,7 @@ tasks:
     - overall HEALTH_
     - \(POOL_FULL\)
     - \(POOL_APP_NOT_ENABLED\)
+    - \(PG_AVAILABILITY\)
 
 - workunit:
     clients:
