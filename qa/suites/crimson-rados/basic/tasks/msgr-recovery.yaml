@@ -1,11 +1,8 @@
 overrides:
   ceph:
     pre-mgr-commands:
-      - sudo ceph config set mgr mgr_pool false --force
+      - sudo ceph config set mgr mgr_mgr_pool false --force
     log-ignorelist:
-    - Reduced data availability
-    - OSD_.*DOWN
-    - \(RECENT_CRASH\)
     - reached quota
     - but it is still running
     - overall HEALTH_
@@ -18,18 +15,13 @@ overrides:
     - \(PG_DEGRADED\)
     conf:
       client:
-        debug ms: 1
+        debug ms: 20
       mon:
         mon warn on pool no app: false
       osd:
         osd class load list: "*"
         osd class default list: "*"
 tasks:
-- workunit:
-    clients:
-      client.0:
-        - rados/test_crash.sh
-- ceph.restart: [osd.*]
 - exec:
-    mon.a:
-      -find $TESTDIR/archive/coredump -type f -exec rm -f {} \;
+    client.0:
+        - unittest-seastar-messenger-recovery

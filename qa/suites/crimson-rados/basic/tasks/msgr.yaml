@@ -24,5 +24,4 @@ overrides:
 tasks:
 - exec:
     client.0:
-        - ceph_test_async_driver
-        - ceph_test_msgr
+        - unittest-seastar-messenger
