@@ -1,7 +1,5 @@
 overrides:
   ceph:
-    pre-mgr-commands:
-      - sudo ceph config set mgr mgr_mgr_pool false --force
     log-ignorelist:
     - reached quota
     - but it is still running
@@ -15,13 +13,14 @@ overrides:
     - \(PG_DEGRADED\)
     conf:
       client:
-        debug ms: 20
+        debug ms: 1
       mon:
         mon warn on pool no app: false
       osd:
         osd class load list: "*"
         osd class default list: "*"
 tasks:
-- exec:
-    client.0:
-        - unittest-seastar-messenger-recovery
+- workunit:
+    clients:
+      client.0:
+        - rados/load-gen-mostlyread.sh
