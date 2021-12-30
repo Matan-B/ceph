@@ -1,0 +1,40 @@
+overrides:
+openstack:
+  - volumes: # attached to each instance
+      count: 2
+      size: 10 # GB
+tasks:
+- install:
+- ceph:
+    log-ignorelist:
+    - reached quota
+    - but it is still running
+    - overall HEALTH_
+    - \(POOL_FULL\)
+    - \(SMALLER_PGP_NUM\)
+    - \(CACHE_POOL_NO_HIT_SET\)
+    - \(CACHE_POOL_NEAR_FULL\)
+    - \(POOL_APP_NOT_ENABLED\)
+    - \(PG_AVAILABILITY\)
+    - \(PG_DEGRADED\)
+    conf:
+      client:
+        debug ms: 1
+      mon:
+        mon warn on pool no app: false
+      osd:
+        osd class load list: "*"
+        osd class default list: "*"
+- admin_socket:
+    osd.0:
+      version:
+      git_version:
+      help:
+      config show:
+      config help:
+      config set bluestore_csum_type xxhash64:
+      perf dump:
+      perf schema:
+      get_heap_property tcmalloc.max_total_thread_cache_byte || dump_metrics memory:
+      set_heap_property tcmalloc.max_total_thread_cache_bytes 67108864 || dump_metrics memory:
+      set_heap_property tcmalloc.max_total_thread_cache_bytes 33554432 || dump_metrics memory:

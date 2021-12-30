@@ -1,0 +1,34 @@
+overrides:
+  ceph:
+    log-ignorelist:
+    - but it is still running
+    - overall HEALTH_
+    - \(OSDMAP_FLAGS\)
+    - \(PG_
+    - \(OSD_
+    - \(OBJECT_
+    - \(POOL_APP_NOT_ENABLED\)
+tasks:
+- cbt:
+    benchmarks:
+      radosbench:
+        concurrent_ops: 4
+        concurrent_procs: 2
+        op_size: [4096]
+        pool_monitoring_list:
+        - collectl
+        pool_profile: 'replicated'
+        run_monitoring_list:
+        - collectl
+        time: 60
+        write_only: false
+        readmode: 'rand'
+    cluster:
+      user: 'ubuntu'
+      osds_per_node: 3
+      iterations: 1
+      pool_profiles:
+        replicated:
+          pg_size: 256
+          pgp_size: 256
+          replication: 'replicated'
