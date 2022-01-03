@@ -74,9 +74,7 @@ class CBT(Task):
 
         if system_type == 'rpm':
             install_cmd = ['sudo', 'yum', '-y', 'install']
-            epel_depends = ['epel-release']
             cbt_depends = ['python3-yaml', 'python3-lxml', 'librbd-devel', 'pdsh', 'collectl']
-            self.first_mon.run(args=install_cmd + epel_depends)
         else:
             install_cmd = ['sudo', 'apt-get', '-y', '--force-yes', 'install']
             cbt_depends = ['python3-yaml', 'python3-lxml', 'librbd-dev', 'collectl']
