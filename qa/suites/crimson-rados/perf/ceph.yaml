@@ -14,3 +14,4 @@ tasks:
       flavor: crimson
 - ceph:
     flavor: crimson
+- ssh_keys:
