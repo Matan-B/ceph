@@ -1,5 +1,10 @@
 overrides:
-  ceph:
+  install:
+    ceph:
+      flavor: crimson
+tasks:
+- install:
+- ceph:
     conf:
       mon:
         mon min osdmap epochs: 50
@@ -8,9 +13,5 @@ overrides:
         mon osdmap full prune min: 15
         mon osdmap full prune interval: 2
         mon osdmap full prune txsize: 2
-tasks:
-- install:
-    ceph:
-      flavor: crimson
-- ceph:
     flavor: crimson
+
