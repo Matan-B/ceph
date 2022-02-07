@@ -5190,6 +5190,16 @@ void OSD::build_initial_pg_history(
       pi,
       &debug);
     if (new_interval) {
+      if (osdmap->get_epoch() == superblock.oldest_map &&
+	  h->last_epoch_clean < osdmap->get_epoch()) {
+        dout(10) << " map gap, clearing past_intervals and faking" << dendl;
+	// our information is incomplete and useless; someone else was clean
+	// after everything we know if osdmaps were trimmed.
+	pi->clear();
+      } else {
+	dout(10) << " noting past " << pi << dendl;
+      }
+
       h->same_interval_since = e;
       if (up != new_up) {
         h->same_up_since = e;
