@@ -24,4 +24,4 @@ tasks:
     chance_pgnum_grow: 0.25
     chance_pgnum_shrink: 0.25
     chance_pgpnum_fix: 0.25
-    chance_test_map_discontinuity: 2
+    chance_test_map_discontinuity: 10
