@@ -1396,14 +1396,15 @@ class OSDThrasher(Thrasher):
                 for osd in self.in_osds:
                     self.ceph_manager.raw_cluster_cmd('osd', 'reweight',
                                                       str(osd), str(1))
-                if random.uniform(0, 1) < float(
-                        self.config.get('chance_test_map_discontinuity', 0)) \
-                        and len(self.live_osds) > 5: # avoid m=2,k=2 stall, w/ some buffer for crush being picky
+                # if random.uniform(0, 1) < float(
+                #        self.config.get('chance_test_map_discontinuity', 0)) \
+                #        and len(self.live_osds) > 5: # avoid m=2,k=2 stall, w/ some buffer for crush being picky
+                    self.log('Testing map discontinuity')
                     self.test_map_discontinuity()
-                else:
-                    self.ceph_manager.wait_for_recovery(
-                        timeout=self.config.get('timeout')
-                        )
+                # else:
+                #    self.ceph_manager.wait_for_recovery(
+                #        timeout=self.config.get('timeout')
+                #        )
                 time.sleep(self.clean_wait)
                 if scrubint > 0:
                     if random.uniform(0, 1) < (float(delay) / scrubint):
