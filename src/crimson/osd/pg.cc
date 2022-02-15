@@ -985,18 +985,22 @@ PG::with_existing_clone_obc(ObjectContextRef clone, with_obc_func_t&& func)
 PG::load_obc_iertr::future<crimson::osd::ObjectContextRef>
 PG::load_head_obc(ObjectContextRef obc)
 {
-  return backend->load_metadata(obc->get_oid()).safe_then_interruptible(
-    [obc=std::move(obc)](auto md)
+  return backend->load_metadata(
+      obc->get_oid(),
+      find_snap_context(obc->get_oid())
+      ).safe_then_interruptible(
+    [obc=std::move(obc), this](auto md)
     -> load_obc_ertr::future<crimson::osd::ObjectContextRef> {
     const hobject_t& oid = md->os.oi.soid;
     logger().debug(
       "load_head_obc: loaded obs {} for {}", md->os.oi, oid);
-    if (!md->ss) {
+    if (!md->ssc) {
       logger().error(
         "load_head_obc: oid {} missing snapset", oid);
       return crimson::ct_error::object_corrupted::make();
     }
-    obc->set_head_state(std::move(md->os), std::move(*(md->ss)));
+    register_snapset_context(md->ssc);
+    obc->set_head_state(std::move(md->os), std::move((md->ssc)));
     logger().debug(
       "load_head_obc: returning obc {} for {}",
       obc->obs.oi, obc->obs.oi.soid);
@@ -1009,23 +1013,36 @@ PG::load_obc_iertr::future<>
 PG::reload_obc(crimson::osd::ObjectContext& obc) const
 {
   assert(obc.is_head());
-  return backend->load_metadata(obc.get_oid()).safe_then_interruptible<false>([&obc](auto md)
+  return backend->load_metadata(
+      obc.get_oid(),
+      find_snap_context(obc.get_oid())
+      ).safe_then_interruptible<false>([&obc](auto md)
     -> load_obc_ertr::future<> {
     logger().debug(
       "{}: reloaded obs {} for {}",
       __func__,
       md->os.oi,
       obc.get_oid());
-    if (!md->ss) {
+    if (!md->ssc) {
       logger().error(
         "{}: oid {} missing snapset",
         __func__,
         obc.get_oid());
       return crimson::ct_error::object_corrupted::make();
     }
-    obc.set_head_state(std::move(md->os), std::move(*(md->ss)));
+    //register_snapset_context(md->ssc);
+    //we only reload here, does registration make sense?
+    obc.set_head_state(std::move(md->os), std::move((md->ssc)));
     return load_obc_ertr::now();
   });
+}
+
+SnapContextRef PG::find_snap_context(const hobject_t& oid) const {
+    if (auto p = shard_services.snapset_contexts.find(oid.get_snapdir());
+        p != shard_services.snapset_contexts.end() ) {
+      return p->second;
+    }
+    return nullptr;
 }
 
 PG::load_obc_iertr::future<>

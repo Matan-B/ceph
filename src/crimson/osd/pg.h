@@ -392,6 +392,19 @@ public:
       // TODO
     }
   };
+
+  //Snaps
+
+  SnapContextRef find_snap_context(const hobject_t& oid) const;
+
+  void register_snapset_context(SnapContextRef ssc) {
+    if (!ssc->registered) {
+      ceph_assert(shard_services.snapset_contexts.count(ssc->oid) == 0);
+      ssc->registered = true;
+      shard_services.snapset_contexts[ssc->oid] = ssc;
+    }
+  }
+
   PGLog::LogEntryHandlerRef get_log_handler(
     ceph::os::Transaction &t) final {
     return std::make_unique<PG::PGLogEntryHandler>(this, &t);

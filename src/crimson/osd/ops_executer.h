@@ -205,6 +205,9 @@ private:
   watch_ierrorator::future<> do_op_notify_ack(
     OSDOp& osd_op,
     const ObjectState& os);
+  watch_ierrorator::future<> do_op_list_snaps(
+    OSDOp& osd_op,
+    const ObjectState& os);
 
   template <class Func>
   auto do_const_op(Func&& f);

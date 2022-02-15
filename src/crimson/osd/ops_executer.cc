@@ -442,6 +442,16 @@ OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_notify_ack(
   });
 }
 
+OpsExecuter::watch_ierrorator::future<> OpsExecuter::do_op_list_snaps(
+  OSDOp& osd_op,
+  const ObjectState& os)
+{
+  logger().debug("{}", __func__);
+  //will be implemented
+  return watch_errorator::now();
+}
+
+
 // Defined here because there is a circular dependency between OpsExecuter and PG
 template <class Func>
 auto OpsExecuter::do_const_op(Func&& f) {
@@ -633,6 +643,10 @@ OpsExecuter::execute_op(OSDOp& osd_op)
   case CEPH_OSD_OP_NOTIFY_ACK:
     return do_read_op([this, &osd_op] (auto&, const auto& os) {
       return do_op_notify_ack(osd_op, os);
+    });
+  case CEPH_OSD_OP_LIST_SNAPS:
+    return do_read_op([this, &osd_op] (auto&, const auto& os) {
+      return do_op_list_snaps(osd_op, os);
     });
 
   default:

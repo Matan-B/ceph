@@ -190,6 +190,8 @@ ClientRequest::process_op(Ref<PG> &pg)
               return with_blocking_future_interruptible<interruptor::condition>(
                 handle.enter(pp(*pg).process)
               ).then_interruptible([this, pg, obc, &mode]() mutable {
+		logger().debug("obc: {} snapset: {}",
+                               obc->get_oid(), obc->ssc->snapset);
                 return do_process(pg, obc).then_interruptible([&mode] (seq_mode_t _mode) {
                   mode = _mode;
                   return seastar::now();
