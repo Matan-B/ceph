@@ -392,6 +392,31 @@ public:
       // TODO
     }
   };
+
+  //Snaps
+  void context_registry_on_change();
+
+
+ // void add_object_context_to_pg_stat(ObjectContextRef obc, pg_stat_t *stat);
+
+ // Simplified version of get_snapset uses only snapset_map
+ // SnapSetContext *get_snapset_context(
+ //   const hobject_t& oid,
+ //   bool can_create,
+ //   bool oid_existed = true //indicate this oid whether exsited in backend
+ // );
+
+  SnapSetContext* find_snap_context(const hobject_t& oid) const;
+
+  void register_snapset_context(SnapSetContext *ssc) {
+    if (!ssc->registered) {
+      ceph_assert(shard_services.snapset_contexts.count(ssc->oid) == 0);
+      ssc->registered = true;
+      shard_services.snapset_contexts[ssc->oid] = ssc;
+    }
+  }
+  //void put_snapset_context(SnapSetContext *ssc);
+
   PGLog::LogEntryHandlerRef get_log_handler(
     ceph::os::Transaction &t) final {
     return std::make_unique<PG::PGLogEntryHandler>(this, &t);

@@ -69,7 +69,8 @@ PGBackend::PGBackend(shard_id_t shard,
 
 PGBackend::load_metadata_iertr::future
   <PGBackend::loaded_object_md_t::ref>
-PGBackend::load_metadata(const hobject_t& oid)
+PGBackend::load_metadata(const hobject_t& oid,
+                         crimson::osd::SnapSetContext* _ssc)
 {
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
@@ -78,7 +79,7 @@ PGBackend::load_metadata(const hobject_t& oid)
   return interruptor::make_interruptible(store->get_attrs(
     coll,
     ghobject_t{oid, ghobject_t::NO_GEN, shard})).safe_then_interruptible(
-      [oid](auto &&attrs) -> load_metadata_ertr::future<loaded_object_md_t::ref>{
+      [oid, _ssc](auto &&attrs) -> load_metadata_ertr::future<loaded_object_md_t::ref>{
 	loaded_object_md_t::ref ret(new loaded_object_md_t());
 	if (auto oiiter = attrs.find(OI_ATTR); oiiter != attrs.end()) {
 	  bufferlist bl = std::move(oiiter->second);
@@ -91,20 +92,31 @@ PGBackend::load_metadata(const hobject_t& oid)
 	    oid);
 	  return crimson::ct_error::object_corrupted::make();
 	}
-	
-	if (oid.is_head()) {
-	  if (auto ssiter = attrs.find(SS_ATTR); ssiter != attrs.end()) {
-	    bufferlist bl = std::move(ssiter->second);
-	    ret->ss = SnapSet(bl);
-	  } else {
-	    /* TODO: add support for writing out snapsets
-	    logger().error(
-	      "load_metadata: object {} present but missing snapset",
-	      oid);
-	    //return crimson::ct_error::object_corrupted::make();
-	    */
-	    ret->ss = SnapSet();
+
+	//crimson::osd::SnapSetContext* ssc;
+	if(_ssc && _ssc->exists) {
+	  //ssc found in snapset_contexts
+	  ret->ssc = _ssc;
+	} else {
+	  if (oid.is_head()) {
+	    //ssc =new snapset_ctx
+	    //ssc will be registered in `with_*_obc()`
+	    if (auto ssiter = attrs.find(SS_ATTR); ssiter != attrs.end()) {
+	      bufferlist bl = std::move(ssiter->second);
+	      ret->ssc->snapset = SnapSet(bl);
+	      ret->ssc->exists = true;
+	    } else {
+	      /* TODO: add support for writing out snapsets
+	      logger().error(
+	        "load_metadata: object {} present but missing snapset",
+	        oid);
+	      //return crimson::ct_error::object_corrupted::make();
+	      */
+	      ret->ssc->snapset = SnapSet();
+	    }
 	  }
+	  ceph_assert(ret->ssc);
+	  ret->ssc->ref++;
 	}
 
 	return load_metadata_ertr::make_ready_future<loaded_object_md_t::ref>(
@@ -118,7 +130,7 @@ PGBackend::load_metadata(const hobject_t& oid)
 	    ObjectState(
 	      object_info_t(oid),
 	      false),
-	    oid.is_head() ? std::optional<SnapSet>(SnapSet()) : std::nullopt
+	    oid.is_head() ? (new crimson::osd::SnapSetContext(oid)) : nullptr
 	  });
       }));
 }

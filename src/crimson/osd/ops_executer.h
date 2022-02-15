@@ -164,6 +164,17 @@ private:
   size_t num_write = 0;   ///< count update ops
   object_stat_sum_t delta_stats;
 
+  //Snaps
+  const ObjectState *obs;          // Old objectstate
+  const SnapSet *snapset;          // Old snapset
+  ObjectState new_obs;             // resulting ObjectState
+  SnapSet new_snapset;             // resulting SnapSet (in case of a write)
+  SnapContext snapc;               // writer snap context
+
+  interval_set<uint64_t> modified_ranges;
+  ObjectContextRef clone_obc;    // if we created a clone
+  ObjectContextRef head_obc;     // if we also update snapset (see trim_object)
+
   // this gizmo could be wrapped in std::optional for the sake of lazy
   // initialization. we don't need it for ops that doesn't have effect
   // TODO: verify the init overhead of chunked_fifo
@@ -205,6 +216,9 @@ private:
   watch_ierrorator::future<> do_op_notify_ack(
     OSDOp& osd_op,
     const ObjectState& os);
+  watch_ierrorator::future<> do_op_list_snaps(
+    OSDOp& osd_op,
+    const ObjectState& os);
 
   template <class Func>
   auto do_const_op(Func&& f);
@@ -232,7 +246,12 @@ public:
     : pg(std::move(pg)),
       obc(std::move(obc)),
       op_info(op_info),
-      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg) {
+      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg),
+      snapset(0) {
+        if (obc->ssc) {
+          new_snapset = obc->ssc->snapset;
+          snapset = &obc->ssc->snapset;
+        }
   }
 
   template <class Func>

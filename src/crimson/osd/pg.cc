@@ -380,6 +380,30 @@ void PG::log_state_exit(
     events);
 }
 
+void PG::context_registry_on_change()
+{
+  return;
+}
+
+//void PG::add_object_context_to_pg_stat(ObjectContextRef obc, pg_stat_t *stat)
+//{
+//  return;
+//}
+
+//SnapSetContext PG::*get_snapset_context(
+//  const hobject_t& oid,
+//  bool can_create,
+//  const std::map<std::string, ceph::buffer::list, std::less<>> *attrs,
+//  bool oid_existed)
+//{
+//
+//}
+
+//void PG::put_snapset_context(SnapSetContext *ssc)
+//{
+//  return;
+//}
+
 ceph::signedspan PG::get_mnow()
 {
   return shard_services.get_mnow();
@@ -792,6 +816,7 @@ PG::do_osd_ops(
   do_osd_ops_success_func_t success_func,
   do_osd_ops_failure_func_t failure_func)
 {
+  //construct OpsExecuter with obc's relevant snap data
   return do_osd_ops_execute<void>(
     seastar::make_lw_shared<OpsExecuter>(
       Ref<PG>{this}, std::move(obc), op_info, msg_params),
@@ -947,8 +972,10 @@ PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
         logger().debug("with_clone_obc: cache miss on {}", coid);
         loaded = clone->template with_promoted_lock<State>(
           [coid, clone, head, this] {
-          return backend->load_metadata(coid).safe_then_interruptible(
-            [coid, clone=std::move(clone), head=std::move(head)](auto md) mutable {
+          return backend->load_metadata(coid,
+	      find_snap_context(coid)).safe_then_interruptible(
+            [coid, clone=std::move(clone), head=std::move(head), this](auto md) mutable {
+            register_snapset_context(md->ssc);
             clone->set_clone_state(std::move(md->os), std::move(head));
             return clone;
           });
@@ -986,17 +1013,18 @@ PG::load_obc_iertr::future<crimson::osd::ObjectContextRef>
 PG::load_head_obc(ObjectContextRef obc)
 {
   return backend->load_metadata(obc->get_oid()).safe_then_interruptible(
-    [obc=std::move(obc)](auto md)
+    [obc=std::move(obc), this](auto md)
     -> load_obc_ertr::future<crimson::osd::ObjectContextRef> {
     const hobject_t& oid = md->os.oi.soid;
     logger().debug(
       "load_head_obc: loaded obs {} for {}", md->os.oi, oid);
-    if (!md->ss) {
+    if (!md->ssc) {
       logger().error(
         "load_head_obc: oid {} missing snapset", oid);
       return crimson::ct_error::object_corrupted::make();
     }
-    obc->set_head_state(std::move(md->os), std::move(*(md->ss)));
+    //register_snapset_context(md->ssc);
+    obc->set_head_state(std::move(md->os), std::move((md->ssc->snapset)));
     logger().debug(
       "load_head_obc: returning obc {} for {}",
       obc->obs.oi, obc->obs.oi.soid);
@@ -1009,23 +1037,34 @@ PG::load_obc_iertr::future<>
 PG::reload_obc(crimson::osd::ObjectContext& obc) const
 {
   assert(obc.is_head());
-  return backend->load_metadata(obc.get_oid()).safe_then_interruptible<false>([&obc](auto md)
+  return backend->load_metadata(
+      obc.get_oid(),
+      find_snap_context(obc.get_oid())
+      ).safe_then_interruptible<false>([&obc](auto md)
     -> load_obc_ertr::future<> {
     logger().debug(
       "{}: reloaded obs {} for {}",
       __func__,
       md->os.oi,
       obc.get_oid());
-    if (!md->ss) {
+    if (!md->ssc) {
       logger().error(
         "{}: oid {} missing snapset",
         __func__,
         obc.get_oid());
       return crimson::ct_error::object_corrupted::make();
     }
-    obc.set_head_state(std::move(md->os), std::move(*(md->ss)));
+    obc.set_head_state(std::move(md->os), std::move((md->ssc->snapset)));
     return load_obc_ertr::now();
   });
+}
+
+SnapSetContext* PG::find_snap_context(const hobject_t& oid) const {
+    if (auto p = shard_services.snapset_contexts.find(oid.get_snapdir());
+        p != shard_services.snapset_contexts.end() ) {
+      return p->second;
+    }
+    return nullptr;
 }
 
 PG::load_obc_iertr::future<>
