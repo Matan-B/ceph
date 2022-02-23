@@ -8,6 +8,19 @@
 
 namespace crimson::osd {
 
+void intrusive_ptr_add_ref(SnapSetContext* ptr) {
+  assert(ptr);
+  ptr->ref++;
+}
+
+void intrusive_ptr_release(SnapSetContext* ptr) {
+  assert(ptr);
+  assert(ptr->ref > 0);
+  if ((--ptr->ref) == 0) {
+    delete ptr;
+  }
+}
+
 ObjectContextRegistry::ObjectContextRegistry(crimson::common::ConfigProxy &conf)
 {
   obc_lru.set_target_size(conf.get_val<uint64_t>("crimson_osd_obc_lru_size"));

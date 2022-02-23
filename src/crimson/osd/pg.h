@@ -406,9 +406,9 @@ public:
  //   bool oid_existed = true //indicate this oid whether exsited in backend
  // );
 
-  SnapSetContext* find_snap_context(const hobject_t& oid) const;
+  SnapContextRef find_snap_context(const hobject_t& oid) const;
 
-  void register_snapset_context(SnapSetContext *ssc) {
+  void register_snapset_context(SnapContextRef ssc) {
     if (!ssc->registered) {
       ceph_assert(shard_services.snapset_contexts.count(ssc->oid) == 0);
       ssc->registered = true;

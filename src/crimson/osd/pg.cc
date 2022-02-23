@@ -1059,7 +1059,7 @@ PG::reload_obc(crimson::osd::ObjectContext& obc) const
   });
 }
 
-SnapSetContext* PG::find_snap_context(const hobject_t& oid) const {
+SnapContextRef PG::find_snap_context(const hobject_t& oid) const {
     if (auto p = shard_services.snapset_contexts.find(oid.get_snapdir());
         p != shard_services.snapset_contexts.end() ) {
       return p->second;

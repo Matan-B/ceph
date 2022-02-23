@@ -195,7 +195,7 @@ public:
   crimson::osd::ObjectContextRegistry obc_registry;
 
   // std::map from oid.snapdir() to SnapSetContext *
-  std::map<hobject_t, SnapSetContext*> snapset_contexts;
+  std::map<hobject_t, SnapContextRef> snapset_contexts;
 
   // Async Reservers
 private:

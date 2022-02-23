@@ -26,6 +26,10 @@ namespace crimson::common {
 namespace crimson::osd {
 
 class Watch;
+struct SnapSetContext;
+using SnapContextRef = boost::intrusive_ptr<SnapSetContext>;
+void intrusive_ptr_add_ref(SnapSetContext*);
+void intrusive_ptr_release(SnapSetContext*);
 
 template <typename OBC>
 struct obc_to_hoid {
@@ -53,8 +57,7 @@ class ObjectContext : public ceph::common::intrusive_lru_base<
 public:
   Ref head; // Ref defined as part of ceph::common::intrusive_lru_base
   ObjectState obs;
-  //std::optional<SnapSet> ss;
-  SnapSetContext *ssc;  // may be null
+  SnapContextRef ssc;
 
   // the watch / notify machinery rather stays away from the hot and
   // frequented paths. std::map is used mostly because of developer's
@@ -82,10 +85,8 @@ public:
 
   const SnapSet &get_ro_ss() const {
     if (is_head()) {
-      ceph_assert(ssc);
       return ssc->snapset;
     } else {
-      ceph_assert(head);
       return head->get_ro_ss();
     }
   }
