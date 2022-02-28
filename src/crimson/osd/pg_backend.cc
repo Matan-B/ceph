@@ -93,16 +93,18 @@ PGBackend::load_metadata(const hobject_t& oid,
 	  return crimson::ct_error::object_corrupted::make();
 	}
 
-	if(_ssc && _ssc->exists) {
-	  //ssc found in snapset_contexts
-	  ret->ssc = _ssc;
-	} else {
-          ret->ssc = new crimson::osd::SnapSetContext(oid.get_snapdir());
-	  //ssc will be registered in `with_*_obc()`
-	  if (oid.is_head()) {
+        //return ssc for head object only
+        if (oid.is_head()) {
+	  if(_ssc && _ssc->exists) {
+	    //ssc found in snapset_contexts
+	    ret->ssc = _ssc;
+	  } else {
 	    if (auto ssiter = attrs.find(SS_ATTR); ssiter != attrs.end()) {
 	      bufferlist bl = std::move(ssiter->second);
+              ret->ssc = new crimson::osd::SnapSetContext(oid.get_snapdir());
+	      //ssc will be registered in `with_*_obc()`
 	      ret->ssc->snapset = SnapSet(bl);
+              //check bl.length()
 	      ret->ssc->exists = true;
 	    } else {
 	      logger().error(
@@ -124,8 +126,9 @@ PGBackend::load_metadata(const hobject_t& oid,
 	    ObjectState(
 	      object_info_t(oid),
 	      false),
-	    oid.is_head() ? (new crimson::osd::SnapSetContext(oid)) : nullptr
-	    //XXX: will register snap + set exists to true, verify behaviour
+            nullptr
+            //oid.is_head() ? (new crimson::osd::SnapSetContext(oid)) : nullptr
+            //XXX: will register snap + set exists to true, verify behaviour
 	  });
       }));
 }
@@ -161,6 +164,15 @@ PGBackend::mutate_object(
       obc->obs.oi.encode_no_oid(osv, CEPH_FEATURES_ALL);
       // TODO: get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, nullptr));
       txn.setattr(coll->get_cid(), ghobject_t{obc->obs.oi.soid}, OI_ATTR, osv);
+
+      if (obc->obs.oi.soid.snap == CEPH_NOSNAP) {
+        logger().debug("final snapset {} in {}",
+          obc->ssc->snapset, obc->obs.oi.soid);
+        ceph::bufferlist ss;
+        encode(obc->ssc->snapset, ss);
+        //use and encode new_snap?
+        txn.setattr(coll->get_cid(), ghobject_t{obc->obs.oi.soid}, SS_ATTR, ss);
+      }
     }
   } else {
     // reset cached ObjectState without enforcing eviction

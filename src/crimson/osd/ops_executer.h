@@ -165,10 +165,6 @@ private:
   object_stat_sum_t delta_stats;
 
   //Snaps
-  const ObjectState *obs;          // Old objectstate
-  const SnapSet *snapset;          // Old snapset
-  ObjectState new_obs;             // resulting ObjectState
-  SnapSet new_snapset;             // resulting SnapSet (in case of a write)
   SnapContext snapc;               // writer snap context
 
   interval_set<uint64_t> modified_ranges;
@@ -246,12 +242,7 @@ public:
     : pg(std::move(pg)),
       obc(std::move(obc)),
       op_info(op_info),
-      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg),
-      snapset(0) {
-        if (obc->ssc) {
-          new_snapset = obc->ssc->snapset;
-          snapset = &obc->ssc->snapset;
-        }
+      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg) {
   }
 
   template <class Func>

@@ -972,10 +972,8 @@ PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
         logger().debug("with_clone_obc: cache miss on {}", coid);
         loaded = clone->template with_promoted_lock<State>(
           [coid, clone, head, this] {
-          return backend->load_metadata(coid,
-	      find_snap_context(coid)).safe_then_interruptible(
-            [coid, clone=std::move(clone), head=std::move(head), this](auto md) mutable {
-            register_snapset_context(md->ssc);
+          return backend->load_metadata(coid).safe_then_interruptible(
+            [coid, clone=std::move(clone), head=std::move(head)](auto md) mutable {
             clone->set_clone_state(std::move(md->os), std::move(head));
             return clone;
           });
@@ -1012,7 +1010,10 @@ PG::with_existing_clone_obc(ObjectContextRef clone, with_obc_func_t&& func)
 PG::load_obc_iertr::future<crimson::osd::ObjectContextRef>
 PG::load_head_obc(ObjectContextRef obc)
 {
-  return backend->load_metadata(obc->get_oid()).safe_then_interruptible(
+  return backend->load_metadata(
+      obc->get_oid(),
+      find_snap_context(obc->get_oid())
+      ).safe_then_interruptible(
     [obc=std::move(obc), this](auto md)
     -> load_obc_ertr::future<crimson::osd::ObjectContextRef> {
     const hobject_t& oid = md->os.oi.soid;
@@ -1023,8 +1024,8 @@ PG::load_head_obc(ObjectContextRef obc)
         "load_head_obc: oid {} missing snapset", oid);
       return crimson::ct_error::object_corrupted::make();
     }
-    //register_snapset_context(md->ssc);
-    obc->set_head_state(std::move(md->os), std::move((md->ssc->snapset)));
+    register_snapset_context(md->ssc);
+    obc->set_head_state(std::move(md->os), std::move((md->ssc)));
     logger().debug(
       "load_head_obc: returning obc {} for {}",
       obc->obs.oi, obc->obs.oi.soid);
@@ -1054,7 +1055,9 @@ PG::reload_obc(crimson::osd::ObjectContext& obc) const
         obc.get_oid());
       return crimson::ct_error::object_corrupted::make();
     }
-    obc.set_head_state(std::move(md->os), std::move((md->ssc->snapset)));
+    //register_snapset_context(md->ssc);
+    //we only reload here, does registration make sense?
+    obc.set_head_state(std::move(md->os), std::move((md->ssc)));
     return load_obc_ertr::now();
   });
 }

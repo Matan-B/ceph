@@ -91,16 +91,19 @@ public:
     }
   }
 
-  void set_head_state(ObjectState &&_obs, SnapSet &&_ss) {
+  void set_head_state(ObjectState &&_obs, SnapContextRef &&_ssc) {
     ceph_assert(is_head());
     obs = std::move(_obs);
-    ssc->snapset = std::move(_ss);
+    ssc = std::move(_ssc);
   }
 
   void set_clone_state(ObjectState &&_obs, Ref &&_head) {
     ceph_assert(!is_head());
     obs = std::move(_obs);
     head = _head;
+    if (head->ssc) {
+      ssc = head->ssc; //ro?
+    }
   }
 
   /// pass the provided exception to any waiting consumers of this ObjectContext
