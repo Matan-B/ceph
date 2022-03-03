@@ -126,8 +126,7 @@ PGBackend::load_metadata(const hobject_t& oid,
 	    ObjectState(
 	      object_info_t(oid),
 	      false),
-            nullptr
-            //oid.is_head() ? (new crimson::osd::SnapSetContext(oid)) : nullptr
+            oid.is_head() ? (new crimson::osd::SnapSetContext(oid)) : nullptr
             //XXX: will register snap + set exists to true, verify behaviour
 	  });
       }));
