@@ -748,9 +748,25 @@ PG::do_osd_ops(
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
   }
+  SnapContext snapc;
+  if (op_info.may_write() || op_info.may_cache()) {
+    //snap
+    if (get_pool().info.is_pool_snaps_mode()) {
+      //use pool's snapc
+      snapc = get_pool().snapc;
+    } else {
+      //client specified snapc
+      snapc.seq = m->get_snap_seq();
+      snapc.snaps = m->get_snaps();
+    }
+  }
   return do_osd_ops_execute<MURef<MOSDOpReply>>(
     seastar::make_lw_shared<OpsExecuter>(
-      Ref<PG>{this}, obc, op_info, *m),
+//<<<<<<< HEAD
+      Ref<PG>{this}, obc, op_info, *m, snapc),
+//=======
+//      Ref<PG>{this}, std::move(obc), op_info, *m, snapc),
+//>>>>>>> bb886c0ecc9... crimson/osd: adding snapc to OpsExecuter
     m->ops,
     op_info,
     [this, m, obc, may_write = op_info.may_write(),
@@ -814,16 +830,30 @@ PG::do_osd_ops(
   do_osd_ops_success_func_t success_func,
   do_osd_ops_failure_func_t failure_func)
 {
-  return seastar::do_with(std::move(msg_params), [=, &ops, &op_info]
+//<<<<<<< HEAD
+  //internal client request
+  SnapContext snapc;  //empty snapc
+  return seastar::do_with(std::move(msg_params), [=, &ops, &op_info, &snapc]
     (auto &msg_params) {
     return do_osd_ops_execute<void>(
       seastar::make_lw_shared<OpsExecuter>(
-        Ref<PG>{this}, std::move(obc), op_info, msg_params),
+        Ref<PG>{this}, std::move(obc), op_info, msg_params, snapc),
       ops,
       std::as_const(op_info),
       std::move(success_func),
       std::move(failure_func));
   });
+//=======
+//  //internal client request
+//  SnapContext snapc;  //empty snapc
+//  return do_osd_ops_execute<void>(
+//    seastar::make_lw_shared<OpsExecuter>(
+//      Ref<PG>{this}, std::move(obc), op_info, msg_params, snapc),
+//    ops,
+//    std::as_const(op_info),
+//    std::move(success_func),
+//    std::move(failure_func));
+//>>>>>>> bb886c0ecc9... crimson/osd: adding snapc to OpsExecuter
 }
 
 PG::interruptible_future<MURef<MOSDOpReply>> PG::do_pg_ops(Ref<MOSDOp> m)

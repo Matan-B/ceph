@@ -166,6 +166,8 @@ private:
   size_t num_write = 0;   ///< count update ops
   object_stat_sum_t delta_stats;
 
+  SnapContext snapc; // writer snap context
+
   // this gizmo could be wrapped in std::optional for the sake of lazy
   // initialization. we don't need it for ops that doesn't have effect
   // TODO: verify the init overhead of chunked_fifo
@@ -236,11 +238,13 @@ public:
   OpsExecuter(Ref<PG> pg,
               ObjectContextRef obc,
               const OpInfo& op_info,
-              const MsgT& msg)
+              const MsgT& msg,
+              const SnapContext& snapc)
     : pg(std::move(pg)),
       obc(std::move(obc)),
       op_info(op_info),
-      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg) {
+      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg),
+      snapc(snapc) {
   }
 
   template <class Func>
@@ -282,6 +286,10 @@ public:
   }
 
   version_t get_last_user_version() const;
+
+  const SnapContext& get_snapc() const {
+    return snapc;
+  }
 };
 
 template <class Context, class MainFunc, class EffectFunc>
