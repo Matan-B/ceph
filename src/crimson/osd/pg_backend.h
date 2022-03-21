@@ -254,6 +254,10 @@ public:
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+  void clone(
+    ObjectState& os,
+    ObjectState& d_os,
+    ceph::os::Transaction& trans);
   interruptible_future<struct stat> stat(
     CollectionRef c,
     const ghobject_t& oid) const;
@@ -348,7 +352,7 @@ protected:
 public:
   struct loaded_object_md_t {
     ObjectState os;
-    std::optional<SnapSet> ss;
+    crimson::osd::SnapContextRef ssc;
     using ref = std::unique_ptr<loaded_object_md_t>;
   };
   load_metadata_iertr::future<loaded_object_md_t::ref>

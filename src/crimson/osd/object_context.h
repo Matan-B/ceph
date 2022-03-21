@@ -26,6 +26,10 @@ namespace crimson::common {
 namespace crimson::osd {
 
 class Watch;
+struct SnapSetContext;
+using SnapContextRef = boost::intrusive_ptr<SnapSetContext>;
+void intrusive_ptr_add_ref(SnapSetContext*);
+void intrusive_ptr_release(SnapSetContext*);
 
 template <typename OBC>
 struct obc_to_hoid {
@@ -35,6 +39,16 @@ struct obc_to_hoid {
   }
 };
 
+struct SnapSetContext {
+  hobject_t oid;
+  SnapSet snapset;
+  int ref;
+  bool exists;
+
+  explicit SnapSetContext(const hobject_t& o) :
+    oid(o), ref(0), exists(false) { }
+};
+
 class ObjectContext : public ceph::common::intrusive_lru_base<
   ceph::common::intrusive_lru_config<
     hobject_t, ObjectContext, obc_to_hoid<ObjectContext>>>
@@ -42,7 +56,7 @@ class ObjectContext : public ceph::common::intrusive_lru_base<
 public:
   Ref head; // Ref defined as part of ceph::common::intrusive_lru_base
   ObjectState obs;
-  std::optional<SnapSet> ss;
+  SnapContextRef ssc;
   // the watch / notify machinery rather stays away from the hot and
   // frequented paths. std::map is used mostly because of developer's
   // convenience.
@@ -69,18 +83,16 @@ public:
 
   const SnapSet &get_ro_ss() const {
     if (is_head()) {
-      ceph_assert(ss);
-      return *ss;
+      return ssc->snapset;
     } else {
-      ceph_assert(head);
       return head->get_ro_ss();
     }
   }
 
-  void set_head_state(ObjectState &&_obs, SnapSet &&_ss) {
+  void set_head_state(ObjectState &&_obs, SnapContextRef _ssc) {
     ceph_assert(is_head());
     obs = std::move(_obs);
-    ss = std::move(_ss);
+    ssc = _ssc;
   }
 
   void set_clone_state(ObjectState &&_obs, Ref &&_head) {
