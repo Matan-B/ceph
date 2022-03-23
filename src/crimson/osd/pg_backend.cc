@@ -94,32 +94,37 @@ PGBackend::load_metadata(const hobject_t& oid)
 	
 	if (oid.is_head()) {
 	  if (auto ssiter = attrs.find(SS_ATTR); ssiter != attrs.end()) {
-	    bufferlist bl = std::move(ssiter->second);
-	    ret->ss = SnapSet(bl);
-	  } else {
-	    /* TODO: add support for writing out snapsets
-	    logger().error(
-	      "load_metadata: object {} present but missing snapset",
-	      oid);
-	    //return crimson::ct_error::object_corrupted::make();
-	    */
-	    ret->ss = SnapSet();
+            bufferlist bl = std::move(ssiter->second);
+            ret->ssc = new crimson::osd::SnapSetContext(oid.get_snapdir());
+            //ssc will be registered in `with_*_obc()`
+            ret->ssc->snapset = SnapSet(bl);
+            //check bl.length()
+            ret->ssc->exists = true;
+          } else {
+          /* TODO: add support for writing out snapsets
+            logger().error(
+             "load_metadata: object {} present but missing snapset",
+              oid);
+            //return crimson::ct_error::object_corrupted::make();
+            */
+            ret->ssc = new crimson::osd::SnapSetContext(oid.get_snapdir());
+            ret->ssc->snapset = SnapSet();
 	  }
 	}
 
-	return load_metadata_ertr::make_ready_future<loaded_object_md_t::ref>(
-	  std::move(ret));
+        return load_metadata_ertr::make_ready_future<loaded_object_md_t::ref>(
+          std::move(ret));
       }, crimson::ct_error::enoent::handle([oid] {
-	logger().debug(
-	  "load_metadata: object {} doesn't exist, returning empty metadata",
-	  oid);
-	return load_metadata_ertr::make_ready_future<loaded_object_md_t::ref>(
-	  new loaded_object_md_t{
-	    ObjectState(
-	      object_info_t(oid),
-	      false),
-	    oid.is_head() ? std::optional<SnapSet>(SnapSet()) : std::nullopt
-	  });
+        logger().debug(
+          "load_metadata: object {} doesn't exist, returning empty metadata",
+          oid);
+        return load_metadata_ertr::make_ready_future<loaded_object_md_t::ref>(
+          new loaded_object_md_t{
+            ObjectState(
+              object_info_t(oid),
+              false),
+          oid.is_head() ? (new crimson::osd::SnapSetContext(oid, false)) : nullptr
+        });
       }));
 }
 

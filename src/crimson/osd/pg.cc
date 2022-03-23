@@ -677,6 +677,8 @@ PG::do_osd_ops_execute(
       ox->get_target(),
       ceph_osd_op_name(osd_op.op.op));
     return ox->execute_op(osd_op);
+  }).safe_then_interruptible([ox] {
+    return ox->make_writeable();
   }).safe_then_interruptible([this, ox, &op_info, &ops] {
     logger().debug(
       "do_osd_ops_execute: object {} all operations successful",
@@ -1049,12 +1051,12 @@ PG::load_head_obc(ObjectContextRef obc)
     const hobject_t& oid = md->os.oi.soid;
     logger().debug(
       "load_head_obc: loaded obs {} for {}", md->os.oi, oid);
-    if (!md->ss) {
+    if (!md->ssc) {
       logger().error(
-        "load_head_obc: oid {} missing snapset", oid);
+        "load_head_obc: oid {} missing snapsetcontext", oid);
       return crimson::ct_error::object_corrupted::make();
     }
-    obc->set_head_state(std::move(md->os), std::move(*(md->ss)));
+    obc->set_head_state(std::move(md->os), md->ssc);
     logger().debug(
       "load_head_obc: returning obc {} for {}",
       obc->obs.oi, obc->obs.oi.soid);
@@ -1074,14 +1076,14 @@ PG::reload_obc(crimson::osd::ObjectContext& obc) const
       __func__,
       md->os.oi,
       obc.get_oid());
-    if (!md->ss) {
+    if (!md->ssc) {
       logger().error(
-        "{}: oid {} missing snapset",
+        "{}: oid {} missing snapsetcontext",
         __func__,
         obc.get_oid());
       return crimson::ct_error::object_corrupted::make();
     }
-    obc.set_head_state(std::move(md->os), std::move(*(md->ss)));
+    obc.set_head_state(std::move(md->os), md->ssc);
     return load_obc_ertr::now();
   });
 }

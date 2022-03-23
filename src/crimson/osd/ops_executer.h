@@ -167,6 +167,8 @@ private:
   object_stat_sum_t delta_stats;
 
   SnapContext snapc; // writer snap context
+  // obc will hold both (old/resulting)obs
+  // and snapset in case of a write
 
   // this gizmo could be wrapped in std::optional for the sake of lazy
   // initialization. we don't need it for ops that doesn't have effect
@@ -290,6 +292,8 @@ public:
   const SnapContext& get_snapc() const {
     return snapc;
   }
+
+  get_attr_errorator::future<> make_writeable();
 };
 
 template <class Context, class MainFunc, class EffectFunc>

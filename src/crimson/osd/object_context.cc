@@ -6,7 +6,26 @@
 #include "common/Formatter.h"
 #include "crimson/common/config_proxy.h"
 
+namespace {
+  seastar::logger& logger() {
+    return crimson::get_logger(ceph_subsys_osd);
+  }
+}
+
 namespace crimson::osd {
+
+void intrusive_ptr_add_ref(SnapSetContext* ptr) {
+  assert(ptr);
+  ptr->ref++;
+}
+
+void intrusive_ptr_release(SnapSetContext* ptr) {
+  assert(ptr);
+  assert(ptr->ref > 0);
+  if ((--ptr->ref) == 0) {
+    delete ptr;
+  }
+}
 
 ObjectContextRegistry::ObjectContextRegistry(crimson::common::ConfigProxy &conf)
 {

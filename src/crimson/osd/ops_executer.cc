@@ -687,6 +687,23 @@ version_t OpsExecuter::get_last_user_version() const
   return pg->get_last_user_version();
 }
 
+PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
+  logger().debug("{} {} snapset={} snapc={}",
+                 __func__, obc->obs.oi.soid,
+		 obc->ssc->snapset, snapc);
+
+  // clone?
+  if (obc->obs.exists &&                         // head exists(ed)
+      snapc.snaps.size() &&                      // there are snaps
+      snapc.snaps[0] > obc->ssc->snapset.seq) {  // existing onj is old
+
+    logger().debug("cloning v ");
+  }
+
+  return get_attr_errorator::now();
+}
+
+
 static inline std::unique_ptr<const PGLSFilter> get_pgls_filter(
   const std::string& type,
   bufferlist::const_iterator& iter)
