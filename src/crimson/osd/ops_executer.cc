@@ -697,10 +697,86 @@ PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
       snapc.snaps.size() &&                      // there are snaps
       snapc.snaps[0] > obc->ssc->snapset.seq) {  // existing onj is old
 
-    logger().debug("cloning v ");
+    //  clone object, the snap field is set to the seq of the SnapContext
+    //  at it's creation.
+    hobject_t coid = obc->obs.oi.soid;
+    coid.snap = snapc.seq;
+
+    unsigned l;
+    for (l=1;
+         l < snapc.snaps.size() && snapc.snaps[l] > obc->ssc->snapset.seq;
+	 l++) ;
+
+    std::vector<snapid_t> snaps(l);
+    for (unsigned i=0; i<l; i++) {
+      snaps[i] = snapc.snaps[i];
+    }
+
+    //prepare clone
+    object_info_t static_snap_oi(coid);
+    object_info_t *snap_oi;
+    if (pg->is_primary()) {
+      // lookup_or_create
+      auto [clone_obc, existed] =
+        pg->get_shard_services().obc_registry.get_cached_obc(
+	    std::move(coid));
+        clone_obc->obs.oi = static_snap_oi;
+        clone_obc->obs.exists = true;
+        clone_obc->ssc = obc->ssc;
+        //if (pg->get_pool().info.is_erasure())
+	//  clone_obc->attr_cache = obc->attr_cache;
+        snap_oi = &clone_obc->obs.oi;
+    } else {
+      snap_oi = &static_snap_oi;
+    }
+    //snap_oi->version = get_last_user_version().;
+    snap_oi->version = osd_op_params->at_version;
+    snap_oi->prior_version = obc->obs.oi.version;
+    snap_oi->copy_user_bits(obc->obs.oi);
+
+    //_make_clone(ctx, ctx->op_t.get(), ctx->clone_obc, soid, coid, snap_oi);
+    _make_clone();
+
+    delta_stats.num_objects++;
+    //dirty,omap,pinned,manifest
+
+    delta_stats.num_object_clones++;
+    // newsnapset is obc's ssc
+    obc->ssc->snapset.clones.push_back(coid.snap);
+    obc->ssc->snapset.clone_size[coid.snap] = obc->obs.oi.size;
+    obc->ssc->snapset.clone_snaps[coid.snap] = snaps;
+
+    // clone_overlap should contain an entry for each clone
+    // (an empty interval_set if there is no overlap)
+    obc->ssc->snapset.clone_overlap[coid.snap];
+    if (obc->obs.oi.size)
+      obc->ssc->snapset.clone_overlap[coid.snap].insert(0, obc->obs.oi.size);
+
+    // log clone
+    logger().debug("cloning v {} to {} v {} snaps= {} snapset={}",
+                   obc->obs.oi.version, coid,
+                   osd_op_params->at_version, snaps, obc->ssc->snapset);
+
+    std::vector<pg_log_entry_t> log_entries;
+    log_entries.emplace_back(pg_log_entry_t::CLONE,
+                             coid, osd_op_params->at_version,
+                             obc->obs.oi.version, obc->obs.oi.user_version,
+                             osd_reqid_t(),
+			     obc->obs.oi.mtime, 0);
+    encode(snaps, log_entries.back().snaps);
+    osd_op_params->at_version.version++;
   }
 
+
   return get_attr_errorator::now();
+}
+
+void OpsExecuter::_make_clone()
+{
+  logger().debug("{}", __func__);
+  bufferlist bv;
+  //encode();
+  //maybe_cache?
 }
 
 

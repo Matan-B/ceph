@@ -155,6 +155,7 @@ private:
 
   Ref<PG> pg; // for the sake of object class
   ObjectContextRef obc;
+  ObjectContextRef clone_obc; // if we create a clone
   const OpInfo& op_info;
   ceph::static_ptr<ExecutableMessage,
                    sizeof(ExecutableMessagePimpl<void>)> msg;
@@ -294,6 +295,8 @@ public:
   }
 
   get_attr_errorator::future<> make_writeable();
+
+  void _make_clone();
 };
 
 template <class Context, class MainFunc, class EffectFunc>
