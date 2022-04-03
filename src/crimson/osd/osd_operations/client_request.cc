@@ -95,6 +95,15 @@ seastar::future<> ClientRequest::start()
           if (m->finish_decode()) {
             m->clear_payload();
           }
+          // remove before flight
+          const hobject_t head = m->get_hobj().get_head();
+          const hobject_t& temp_oid =
+            m->get_snapid() == CEPH_SNAPDIR ? head : m->get_hobj();
+          if (temp_oid.snap == CEPH_NOSNAP) {
+            logger().debug("this is a head");
+          } else {
+            logger().debug("this is a clone");
+          }
           return with_sequencer(interruptor::wrap_function([pgref, this] {
             PG &pg = *pgref;
             if (pg.can_discard_op(*m)) {

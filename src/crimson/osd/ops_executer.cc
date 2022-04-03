@@ -720,6 +720,8 @@ PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
       auto [clone_obc, existed] =
         pg->get_shard_services().obc_registry.get_cached_obc(
 	    std::move(coid));
+        assert(!existed);
+        logger().debug("clone_obc:{}", clone_obc);
         clone_obc->obs.oi = static_snap_oi;
         clone_obc->obs.exists = true;
         clone_obc->ssc = obc->ssc;
@@ -765,6 +767,14 @@ PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
 			     obc->obs.oi.mtime, 0);
     encode(snaps, log_entries.back().snaps);
     osd_op_params->at_version.version++;
+
+    // TODO: update most recent clone_overlap and usage stats
+
+    if (snapc.seq > obc->ssc->snapset.seq) {
+       // update snapset with latest snap context
+       obc->ssc->snapset.seq = snapc.seq;
+       //obc->ssc->snapset.snaps.clear();
+    }
   }
 
 

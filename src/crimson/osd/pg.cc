@@ -908,11 +908,14 @@ std::optional<hobject_t> PG::resolve_oid(
   const SnapSet &ss,
   const hobject_t &oid)
 {
+  logger().debug("{} oid.snap={},head snapset.seq={}",
+                 __func__, oid.snap, ss.seq);
   if (oid.snap > ss.seq) {
+    // perfrom a read from head
     return oid.get_head();
   } else {
     // which clone would it be?
-    auto clone = std::upper_bound(
+    auto clone = std::find(
       begin(ss.clones), end(ss.clones),
       oid.snap);
     if (clone == end(ss.clones)) {
@@ -996,7 +999,7 @@ PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
       return load_obc_ertr::make_ready_future<>();
     }
     auto [clone, existed] = shard_services.obc_registry.get_cached_obc(*coid);
-    return clone->template with_lock<State>(
+    return clone->template with_lock<State, IOInterruptCondition>(
       [coid=*coid, existed=existed,
        head=std::move(head), clone=std::move(clone),
        func=std::move(func), this]() -> load_obc_iertr::future<> {
