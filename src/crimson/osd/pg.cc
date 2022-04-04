@@ -612,19 +612,6 @@ PG::submit_transaction(
   }));
 }
 
-void PG::fill_op_params_bump_pg_version(
-  osd_op_params_t& osd_op_p,
-  const bool user_modify)
-{
-  osd_op_p.at_version = next_version();
-  osd_op_p.pg_trim_to = get_pg_trim_to();
-  osd_op_p.min_last_complete_ondisk = get_min_last_complete_ondisk();
-  osd_op_p.last_complete = get_info().last_complete;
-  if (user_modify) {
-    osd_op_p.user_at_version = osd_op_p.at_version.version;
-  }
-}
-
 PG::interruptible_future<> PG::repair_object(
   const hobject_t& oid,
   eversion_t& v) 
@@ -667,7 +654,6 @@ PG::do_osd_ops_iertr::future<PG::pg_rep_op_fut_t<Ret>>
 PG::do_osd_ops_execute(
   seastar::lw_shared_ptr<OpsExecuter> ox,
   std::vector<OSDOp>& ops,
-  const OpInfo &op_info,
   SuccessFunc&& success_func,
   FailureFunc&& failure_func)
 {
@@ -683,23 +669,19 @@ PG::do_osd_ops_execute(
       ox->get_target(),
       ceph_osd_op_name(osd_op.op.op));
     return ox->execute_op(osd_op);
-  }).safe_then_interruptible([this, ox, &op_info, &ops] {
+  }).safe_then_interruptible([this, ox, &ops] {
     logger().debug(
       "do_osd_ops_execute: object {} all operations successful",
       ox->get_target());
     peering_state.apply_op_stats(ox->get_target(), ox->get_stats());
-    return std::move(*ox).flush_changes_n_do_ops_effects(
-      [this, &op_info, &ops] (auto&& txn,
-                              auto&& obc,
-                              auto&& osd_op_p,
-                              auto&& log_entries,
-                              bool user_modify) {
+    return std::move(*ox).flush_changes_n_do_ops_effects(ops,
+      [this] (auto&& txn,
+              auto&& obc,
+              auto&& osd_op_p,
+              auto&& log_entries) {
 	logger().debug(
 	  "do_osd_ops_execute: object {} submitting txn",
 	  obc->get_oid());
-  fill_op_params_bump_pg_version(osd_op_p, user_modify);
-  prepare_transaction(obc, log_entries, op_info, ops, osd_op_p);
-
 	return submit_transaction(
           std::move(obc),
           std::move(txn),
@@ -770,13 +752,8 @@ PG::do_osd_ops(
   }
   return do_osd_ops_execute<MURef<MOSDOpReply>>(
     seastar::make_lw_shared<OpsExecuter>(
-//<<<<<<< HEAD
       Ref<PG>{this}, obc, op_info, *m, snapc),
-//=======
-//      Ref<PG>{this}, std::move(obc), op_info, *m, snapc),
-//>>>>>>> bb886c0ecc9... crimson/osd: adding snapc to OpsExecuter
     m->ops,
-    op_info,
     [this, m, obc, may_write = op_info.may_write(),
      may_read = op_info.may_read(), rvec = op_info.allows_returnvec()] {
       // TODO: should stop at the first op which returns a negative retval,
@@ -838,7 +815,6 @@ PG::do_osd_ops(
   do_osd_ops_success_func_t success_func,
   do_osd_ops_failure_func_t failure_func)
 {
-//<<<<<<< HEAD
   //internal client request
   SnapContext snapc;  //empty snapc
   return seastar::do_with(std::move(msg_params), [=, &ops, &op_info, &snapc]
@@ -847,21 +823,9 @@ PG::do_osd_ops(
       seastar::make_lw_shared<OpsExecuter>(
         Ref<PG>{this}, std::move(obc), op_info, msg_params, snapc),
       ops,
-      std::as_const(op_info),
       std::move(success_func),
       std::move(failure_func));
   });
-//=======
-//  //internal client request
-//  SnapContext snapc;  //empty snapc
-//  return do_osd_ops_execute<void>(
-//    seastar::make_lw_shared<OpsExecuter>(
-//      Ref<PG>{this}, std::move(obc), op_info, msg_params, snapc),
-//    ops,
-//    std::as_const(op_info),
-//    std::move(success_func),
-//    std::move(failure_func));
-//>>>>>>> bb886c0ecc9... crimson/osd: adding snapc to OpsExecuter
 }
 
 PG::interruptible_future<MURef<MOSDOpReply>> PG::do_pg_ops(Ref<MOSDOp> m)

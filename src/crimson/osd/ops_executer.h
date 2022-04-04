@@ -265,7 +265,11 @@ public:
   using rep_op_fut_t =
     interruptible_future<rep_op_fut_tuple>;
   template <typename MutFunc>
-  rep_op_fut_t flush_changes_n_do_ops_effects(MutFunc&& mut_func) &&;
+  rep_op_fut_t flush_changes_n_do_ops_effects(const std::vector<OSDOp>& ops,
+    MutFunc&& mut_func) &&;
+  void prepare_transaction(std::vector<pg_log_entry_t>& log_entries,
+    const std::vector<OSDOp>& ops);
+  void fill_op_params_bump_pg_version();
 
   const hobject_t &get_target() const {
     return obc->obs.oi.soid;
@@ -339,7 +343,9 @@ auto OpsExecuter::with_effect_on_obc(
 
 template <typename MutFunc>
 OpsExecuter::rep_op_fut_t
-OpsExecuter::flush_changes_n_do_ops_effects(MutFunc&& mut_func) &&
+OpsExecuter::flush_changes_n_do_ops_effects(
+  const std::vector<OSDOp>& ops,
+  MutFunc&& mut_func) &&
 {
   const bool want_mutate = !txn.empty();
 
@@ -351,14 +357,14 @@ OpsExecuter::flush_changes_n_do_ops_effects(MutFunc&& mut_func) &&
 	seastar::now(),
 	interruptor::make_interruptible(osd_op_errorator::now()));
   if (want_mutate) {
-    osd_op_params->req_id = msg->get_reqid();
-    osd_op_params->mtime = msg->get_mtime();
+    std::vector<pg_log_entry_t> log_entries;
+    fill_op_params_bump_pg_version();
+    prepare_transaction(log_entries, ops);
     make_writeable();
     auto [submitted, all_completed] = std::forward<MutFunc>(mut_func)(std::move(txn),
                                                     std::move(obc),
                                                     std::move(*osd_op_params),
-                                                    std::move(log_entries),
-                                                    user_modify);
+                                                    std::move(log_entries));
     maybe_mutated = interruptor::make_ready_future<rep_op_fut_tuple>(
 	std::move(submitted),
 	osd_op_ierrorator::future<>(std::move(all_completed)));
