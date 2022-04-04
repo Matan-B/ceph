@@ -162,6 +162,7 @@ private:
   std::optional<osd_op_params_t> osd_op_params;
   bool user_modify = false;
   ceph::os::Transaction txn;
+  std::vector<pg_log_entry_t> log_entries;
 
   size_t num_read = 0;    ///< count read ops
   size_t num_write = 0;   ///< count update ops
@@ -341,6 +342,7 @@ OpsExecuter::rep_op_fut_t
 OpsExecuter::flush_changes_n_do_ops_effects(MutFunc&& mut_func) &&
 {
   const bool want_mutate = !txn.empty();
+
   // osd_op_params are instantiated by every wr-like operation.
   assert(osd_op_params || !want_mutate);
   assert(obc);
@@ -354,6 +356,7 @@ OpsExecuter::flush_changes_n_do_ops_effects(MutFunc&& mut_func) &&
     auto [submitted, all_completed] = std::forward<MutFunc>(mut_func)(std::move(txn),
                                                     std::move(obc),
                                                     std::move(*osd_op_params),
+                                                    std::move(log_entries),
                                                     user_modify);
     maybe_mutated = interruptor::make_ready_future<rep_op_fut_tuple>(
 	std::move(submitted),

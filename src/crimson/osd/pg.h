@@ -569,6 +569,12 @@ private:
   void fill_op_params_bump_pg_version(
     osd_op_params_t& osd_op_p,
     const bool user_modify);
+  void prepare_transaction(
+    ObjectContextRef obc,
+    std::vector<pg_log_entry_t>& log_entries,
+    const OpInfo& op_info,
+    const std::vector<OSDOp>& ops,
+    osd_op_params_t& osd_op_p);
   using do_osd_ops_ertr = crimson::errorator<
    crimson::ct_error::eagain>;
   using do_osd_ops_iertr =
@@ -605,11 +611,10 @@ private:
   interruptible_future<MURef<MOSDOpReply>> do_pg_ops(Ref<MOSDOp> m);
   std::tuple<interruptible_future<>, interruptible_future<>>
   submit_transaction(
-    const OpInfo& op_info,
-    const std::vector<OSDOp>& ops,
     ObjectContextRef&& obc,
     ceph::os::Transaction&& txn,
-    osd_op_params_t&& oop);
+    osd_op_params_t&& oop,
+    std::vector<pg_log_entry_t>&& log_entries);
   interruptible_future<> repair_object(
     const hobject_t& oid,
     eversion_t& v);

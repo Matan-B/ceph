@@ -571,11 +571,10 @@ seastar::future<> PG::WaitForActiveBlocker::stop()
 std::tuple<PG::interruptible_future<>,
            PG::interruptible_future<>>
 PG::submit_transaction(
-  const OpInfo& op_info,
-  const std::vector<OSDOp>& ops,
   ObjectContextRef&& obc,
   ceph::os::Transaction&& txn,
-  osd_op_params_t&& osd_op_p)
+  osd_op_params_t&& osd_op_p,
+  std::vector<pg_log_entry_t>&& log_entries)
 {
   if (__builtin_expect(stopping, false)) {
     return {seastar::make_exception_future<>(
@@ -589,21 +588,6 @@ PG::submit_transaction(
     throw crimson::common::actingset_changed(is_primary());
   }
 
-  std::vector<pg_log_entry_t> log_entries;
-  log_entries.emplace_back(obc->obs.exists ?
-		      pg_log_entry_t::MODIFY : pg_log_entry_t::DELETE,
-		    obc->obs.oi.soid, osd_op_p.at_version, obc->obs.oi.version,
-		    osd_op_p.user_modify ? osd_op_p.at_version.version : 0,
-		    osd_op_p.req_id, osd_op_p.mtime,
-                    op_info.allows_returnvec() && !ops.empty() ? ops.back().rval.code : 0);
-  // TODO: refactor the submit_transaction
-  if (op_info.allows_returnvec()) {
-    // also the per-op values are recorded in the pg log
-    log_entries.back().set_op_returns(ops);
-    logger().debug("{} op_returns: {}",
-                   __func__, log_entries.back().op_returns);
-  }
-  log_entries.back().clean_regions = std::move(osd_op_p.clean_regions);
   peering_state.pre_submit_op(obc->obs.oi.soid, log_entries, osd_op_p.at_version);
   peering_state.append_log_with_trim_to_updated(std::move(log_entries), osd_op_p.at_version,
 						txn, true, false);
@@ -656,6 +640,28 @@ PG::interruptible_future<> PG::repair_object(
   return std::move(fut);
 }
 
+void PG::prepare_transaction(
+  ObjectContextRef obc,
+  std::vector<pg_log_entry_t>& log_entries,
+  const OpInfo& op_info,
+  const std::vector<OSDOp>& ops,
+  osd_op_params_t& osd_op_p)
+{
+  log_entries.emplace_back(obc->obs.exists ?
+      pg_log_entry_t::MODIFY : pg_log_entry_t::DELETE,
+    obc->obs.oi.soid, osd_op_p.at_version, obc->obs.oi.version,
+    osd_op_p.user_modify ? osd_op_p.at_version.version : 0,
+    osd_op_p.req_id, osd_op_p.mtime,
+    op_info.allows_returnvec() && !ops.empty() ? ops.back().rval.code : 0);
+  if (op_info.allows_returnvec()) {
+    // also the per-op values are recorded in the pg log
+    log_entries.back().set_op_returns(ops);
+    logger().debug("{} op_returns: {}",
+                   __func__, log_entries.back().op_returns);
+  }
+  log_entries.back().clean_regions = std::move(osd_op_p.clean_regions);
+}
+
 template <class Ret, class SuccessFunc, class FailureFunc>
 PG::do_osd_ops_iertr::future<PG::pg_rep_op_fut_t<Ret>>
 PG::do_osd_ops_execute(
@@ -688,17 +694,19 @@ PG::do_osd_ops_execute(
       [this, &op_info, &ops] (auto&& txn,
                               auto&& obc,
                               auto&& osd_op_p,
+                              auto&& log_entries,
                               bool user_modify) {
 	logger().debug(
 	  "do_osd_ops_execute: object {} submitting txn",
 	  obc->get_oid());
-        fill_op_params_bump_pg_version(osd_op_p, user_modify);
+  fill_op_params_bump_pg_version(osd_op_p, user_modify);
+  prepare_transaction(obc, log_entries, op_info, ops, osd_op_p);
+
 	return submit_transaction(
-          op_info,
-          ops,
           std::move(obc),
           std::move(txn),
-          std::move(osd_op_p));
+          std::move(osd_op_p),
+          std::move(log_entries));
     });
   }).safe_then_unpack_interruptible(
     [success_func=std::move(success_func), rollbacker, this, failure_func_ptr]
