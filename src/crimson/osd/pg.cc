@@ -683,8 +683,6 @@ PG::do_osd_ops_execute(
       ox->get_target(),
       ceph_osd_op_name(osd_op.op.op));
     return ox->execute_op(osd_op);
-  }).safe_then_interruptible([ox] {
-    return ox->make_writeable();
   }).safe_then_interruptible([this, ox, &op_info, &ops] {
     logger().debug(
       "do_osd_ops_execute: object {} all operations successful",

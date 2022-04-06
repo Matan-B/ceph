@@ -295,7 +295,7 @@ public:
     return snapc;
   }
 
-  get_attr_errorator::future<> make_writeable();
+  void make_writeable();
 
   void _make_clone();
 };
@@ -353,6 +353,7 @@ OpsExecuter::flush_changes_n_do_ops_effects(MutFunc&& mut_func) &&
   if (want_mutate) {
     osd_op_params->req_id = msg->get_reqid();
     osd_op_params->mtime = msg->get_mtime();
+    make_writeable();
     auto [submitted, all_completed] = std::forward<MutFunc>(mut_func)(std::move(txn),
                                                     std::move(obc),
                                                     std::move(*osd_op_params),

@@ -687,10 +687,12 @@ version_t OpsExecuter::get_last_user_version() const
   return pg->get_last_user_version();
 }
 
-PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
+void OpsExecuter::make_writeable() {
   logger().debug("{} {} snapset={} snapc={}",
                  __func__, obc->obs.oi.soid,
 		 obc->ssc->snapset, snapc);
+  // version
+  osd_op_params->at_version = pg->next_version();
 
   // clone?
   if (obc->obs.exists &&                         // head exists(ed)
@@ -759,7 +761,6 @@ PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
                    obc->obs.oi.version, coid,
                    osd_op_params->at_version, snaps, obc->ssc->snapset);
 
-    std::vector<pg_log_entry_t> log_entries;
     log_entries.emplace_back(pg_log_entry_t::CLONE,
                              coid, osd_op_params->at_version,
                              obc->obs.oi.version, obc->obs.oi.user_version,
@@ -776,9 +777,6 @@ PGBackend::get_attr_errorator::future<> OpsExecuter::make_writeable() {
        //obc->ssc->snapset.snaps.clear();
     }
   }
-
-
-  return get_attr_errorator::now();
 }
 
 void OpsExecuter::_make_clone()
