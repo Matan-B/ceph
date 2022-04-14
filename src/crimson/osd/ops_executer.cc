@@ -719,7 +719,7 @@ version_t OpsExecuter::get_last_user_version() const
   return pg->get_last_user_version();
 }
 
-void OpsExecuter::make_writeable() {
+void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
   logger().debug("{} {} snapset={} snapc={}",
                  __func__, obc->obs.oi.soid,
 		 obc->ssc->snapset, snapc);

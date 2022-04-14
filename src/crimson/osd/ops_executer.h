@@ -162,7 +162,7 @@ private:
   std::optional<osd_op_params_t> osd_op_params;
   bool user_modify = false;
   ceph::os::Transaction txn;
-  std::vector<pg_log_entry_t> log_entries;
+  //std::vector<pg_log_entry_t> log_entries;
 
   size_t num_read = 0;    ///< count read ops
   size_t num_write = 0;   ///< count update ops
@@ -299,7 +299,7 @@ public:
     return snapc;
   }
 
-  void make_writeable();
+  void make_writeable(std::vector<pg_log_entry_t>& log_entries);
 
   void _make_clone();
 };
@@ -360,7 +360,7 @@ OpsExecuter::flush_changes_n_do_ops_effects(
     std::vector<pg_log_entry_t> log_entries;
     fill_op_params_bump_pg_version();
     prepare_transaction(log_entries, ops);
-    make_writeable();
+    make_writeable(log_entries);
     auto [submitted, all_completed] = std::forward<MutFunc>(mut_func)(std::move(txn),
                                                     std::move(obc),
                                                     std::move(*osd_op_params),
