@@ -1060,6 +1060,17 @@ PGBackend::rm_xattr(
   return rm_xattr_iertr::now();
 }
 
+PGBackend::interruptible_future<>
+PGBackend::clone(
+  ObjectState& os,
+  ObjectState& d_os,
+  ceph::os::Transaction& txn)
+{
+  //do we need OSDOp info
+  txn.clone(coll->get_cid(), ghobject_t{os.oi.soid}, ghobject_t{d_os.oi.soid});
+  return seastar::now();
+}
+
 using get_omap_ertr =
   crimson::os::FuturizedStore::read_errorator::extend<
     crimson::ct_error::enodata>;

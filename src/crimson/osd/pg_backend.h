@@ -238,6 +238,10 @@ public:
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
+  interruptible_future<> clone(
+    ObjectState& os,
+    ObjectState& d_os,
+    ceph::os::Transaction& trans);
   interruptible_future<struct stat> stat(
     CollectionRef c,
     const ghobject_t& oid) const;

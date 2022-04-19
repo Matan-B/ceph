@@ -978,7 +978,7 @@ PG::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
         logger().debug("with_clone_obc: found {} in cache", coid);
       } else {
         logger().debug("with_clone_obc: cache miss on {}", coid);
-        loaded = clone->template with_promoted_lock<State>(
+        loaded = clone->template with_promoted_lock<State, IOInterruptCondition>(
           [coid, clone, head, this] {
           return backend->load_metadata(coid).safe_then_interruptible(
             [coid, clone=std::move(clone), head=std::move(head)](auto md) mutable {

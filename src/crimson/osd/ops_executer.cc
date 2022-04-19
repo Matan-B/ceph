@@ -751,16 +751,20 @@ void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
     object_info_t *snap_oi;
     if (pg->is_primary()) {
       // lookup_or_create
-      auto [clone_obc, existed] =
+      auto [c_obc, existed] =
         pg->get_shard_services().obc_registry.get_cached_obc(
 	    std::move(coid));
         assert(!existed);
-        logger().debug("clone_obc:{}", clone_obc);
-        clone_obc->obs.oi = static_snap_oi;
-        clone_obc->obs.exists = true;
-        clone_obc->ssc = obc->ssc;
+        c_obc->obs.oi = static_snap_oi;
+        c_obc->obs.exists = true;
+        c_obc->ssc = obc->ssc;
+        logger().debug("clone_obc:{}", c_obc->obs.oi);
+        clone_obc=std::move(c_obc);
+        //ssc?
+        clone_obc->set_clone_state(std::move(clone_obc->obs), obc->get_head_obc());
+
         //if (pg->get_pool().info.is_erasure())
-	//  clone_obc->attr_cache = obc->attr_cache;
+	      //  clone_obc->attr_cache = obc->attr_cache;
         snap_oi = &clone_obc->obs.oi;
     } else {
       snap_oi = &static_snap_oi;
@@ -770,7 +774,6 @@ void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
     snap_oi->prior_version = obc->obs.oi.version;
     snap_oi->copy_user_bits(obc->obs.oi);
 
-    //_make_clone(ctx, ctx->op_t.get(), ctx->clone_obc, soid, coid, snap_oi);
     _make_clone();
 
     delta_stats.num_objects++;
@@ -814,9 +817,16 @@ void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
 void OpsExecuter::_make_clone()
 {
   logger().debug("{}", __func__);
-  bufferlist bv;
-  //encode();
-  //maybe_cache?
+  // cloning transaction
+
+  ///XXX: Futurize
+  // do_write_op (num_write/read++)
+  std::ignore = pg->get_backend().clone(obc->obs, clone_obc->obs, txn);
+
+  //bufferlist bv;
+  //encode(snap_oi to bv);
+  //set attr maybe_cache OI_ATTR
+  //rm attr maybe cache SS_ATTR
 }
 
 
