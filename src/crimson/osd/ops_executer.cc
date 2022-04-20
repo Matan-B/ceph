@@ -720,9 +720,10 @@ version_t OpsExecuter::get_last_user_version() const
 }
 
 void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
+  const hobject_t& soid = obc->obs.oi.soid;
   logger().debug("{} {} snapset={} snapc={}",
-                 __func__, obc->obs.oi.soid,
-		 obc->ssc->snapset, snapc);
+                 __func__, soid,
+                 obc->ssc->snapset, snapc);
   // version
   osd_op_params->at_version = pg->next_version();
 
@@ -733,7 +734,7 @@ void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
 
     //  clone object, the snap field is set to the seq of the SnapContext
     //  at it's creation.
-    hobject_t coid = obc->obs.oi.soid;
+    hobject_t coid = soid;
     coid.snap = snapc.seq;
 
     unsigned l;
@@ -753,22 +754,26 @@ void OpsExecuter::make_writeable(std::vector<pg_log_entry_t>& log_entries) {
       // lookup_or_create
       auto [c_obc, existed] =
         pg->get_shard_services().obc_registry.get_cached_obc(
-	    std::move(coid));
-        assert(!existed);
-        c_obc->obs.oi = static_snap_oi;
-        c_obc->obs.exists = true;
-        c_obc->ssc = obc->ssc;
-        logger().debug("clone_obc:{}", c_obc->obs.oi);
-        clone_obc=std::move(c_obc);
-        //ssc?
-        clone_obc->set_clone_state(std::move(clone_obc->obs), obc->get_head_obc());
+          std::move(coid));
+      assert(!existed);
+      c_obc->obs.oi = static_snap_oi;
+      c_obc->obs.exists = true;
+      c_obc->ssc = obc->ssc;
+      logger().debug("clone_obc:{}", c_obc->obs.oi);
+      //use c_obc's oid ctor
+      //clone_obc.get()(c_obc->obs.oi.soid);
+      clone_obc=std::move(c_obc);
+      //ssc?
+      //set head
+      //clone_obc->set_clone_state(std::move(clone_obc->obs), obc->get_head_obc());
 
-        //if (pg->get_pool().info.is_erasure())
-	      //  clone_obc->attr_cache = obc->attr_cache;
-        snap_oi = &clone_obc->obs.oi;
+      //if (pg->get_pool().info.is_erasure())
+      //  clone_obc->attr_cache = obc->attr_cache;
+      snap_oi = &clone_obc->obs.oi;
     } else {
       snap_oi = &static_snap_oi;
     }
+
     //snap_oi->version = get_last_user_version().;
     snap_oi->version = osd_op_params->at_version;
     snap_oi->prior_version = obc->obs.oi.version;
@@ -821,7 +826,14 @@ void OpsExecuter::_make_clone()
 
   ///XXX: Futurize
   // do_write_op (num_write/read++)
-  std::ignore = pg->get_backend().clone(obc->obs, clone_obc->obs, txn);
+
+  // Prepend the cloning operation to txn
+  ceph::os::Transaction c_txn;
+  std::ignore = pg->get_backend().clone(obc->obs, clone_obc->obs, c_txn);
+  ++num_write;
+  // Operations will be removed from txn while appending
+  c_txn.append(txn);
+  txn=std::move(c_txn);
 
   //bufferlist bv;
   //encode(snap_oi to bv);
