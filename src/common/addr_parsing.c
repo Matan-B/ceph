@@ -80,6 +80,11 @@ char *resolve_addrs(const char *orig_str)
       port_str = bracecolon + 1;
       *port_str = 0;
       port_str++;
+    } else {
+      /* ipv6addr:port */
+      port_str = lastcolon;
+      *port_str = 0;
+      port_str++;
     }
     if (port_str && !*port_str)
       port_str = NULL;
