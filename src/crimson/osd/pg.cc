@@ -721,6 +721,18 @@ PG::do_osd_ops(
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
   }
+  if (op_info.may_write() || op_info.may_cache()) {
+    if (get_pgpool().info.is_pool_snaps_mode()) {
+      logger().debug("{} testing(pool snaps) snap_seq:{}",
+        __func__, get_pgpool().snapc.seq);
+    } else {
+      logger().debug("{} testing(self) snap_seq:{}",
+        __func__, m->get_snap_seq());
+      if (m->get_snap_seq() > 0) {
+        logger().debug("{} success", __func__);
+      }
+    }
+  }
   return do_osd_ops_execute<MURef<MOSDOpReply>>(
     seastar::make_lw_shared<OpsExecuter>(
       Ref<PG>{this}, obc, op_info, *m),
