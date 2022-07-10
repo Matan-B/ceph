@@ -54,7 +54,6 @@ tasks:
    - client.1
 - print: "**** done => started rgw client.1"
 - parallel:
-    - workload
     - upgrade-sequence
 - print: "**** done parallel"
 - install.upgrade:
