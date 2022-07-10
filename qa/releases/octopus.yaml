@@ -8,4 +8,15 @@ tasks:
       - rados -p pl2 rmsnap snpp
       - sleep 30
       - rados df
+      - ceph osd pool create oc_pool 1
+      - echo "a" >> a.txt
+      - rados -p oc_pool put objectone a.txt
+      - rados -p oc_pool mksnap snpp
+      - echo "b" >> b.txt
+      - rados -p oc_pool put objectone b.txt
+      - sleep 30
+      - rados df
+      - rados -p oc_pool rmsnap snpp
+      - sleep 30
+      - rados df
 - ceph.healthy:
