@@ -3,5 +3,12 @@ tasks:
     osd.0:
       - ceph osd require-osd-release octopus
       - ceph osd set-require-min-compat-client octopus
+      - rados df
       - for f in `ceph osd pool ls` ; do ceph osd pool set $f pg_autoscale_mode off ; done
+- print: "**** deleting snapshot"
+- exec:
+    osd.0:
+      - rados -p pl2 rmsnap snpp
+      - sleep 30
+      - rados df
 - ceph.healthy:
