@@ -37,18 +37,9 @@ tasks:
     osd.0:
       - ceph osd set-require-min-compat-client nautilus
       - ceph osd pool create pl2 1
-- print: "**** creating pool"
-- exec:
-    osd.0:
       - echo "a" >> a.txt
       - rados -p pl2 put objectone a.txt
-- print: "**** creating snap"
-- exec:
-    osd.0:
       - rados -p pl2 mksnap snpp
-- print: "**** creating clone"
-- exec:
-    osd.0:
       - echo "b" >> b.txt
       - rados -p pl2 put objectone b.txt
       - sleep 30
