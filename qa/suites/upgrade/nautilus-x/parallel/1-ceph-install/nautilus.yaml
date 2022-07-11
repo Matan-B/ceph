@@ -36,6 +36,10 @@ tasks:
 - exec:
     osd.0:
       - ceph osd set-require-min-compat-client nautilus
+      # Set cache to 0
+      - ceph tell osd.0 config set osd_pg_object_context_cache_count 0
+      - sleep 30
+      - ceph config show osd.0 osd_pg_object_context_cache_count
       # Create a new (Octopus) pool and snapshot
       - ceph osd pool create pl2 1
       - echo "a" >> a.txt

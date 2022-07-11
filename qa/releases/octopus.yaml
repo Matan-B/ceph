@@ -3,6 +3,9 @@ tasks:
     osd.0:
       - ceph osd require-osd-release octopus
       - ceph osd set-require-min-compat-client octopus
+      - ceph tell osd.0 config set osd_pg_object_context_cache_count 0
+      - sleep 30
+      - ceph config show osd.0 osd_pg_object_context_cache_count
       - rados df
       - for f in `ceph osd pool ls` ; do ceph osd pool set $f pg_autoscale_mode off ; done
       # Create a new (Octopus) pool and snapshot
