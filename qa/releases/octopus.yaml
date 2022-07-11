@@ -5,18 +5,25 @@ tasks:
       - ceph osd set-require-min-compat-client octopus
       - rados df
       - for f in `ceph osd pool ls` ; do ceph osd pool set $f pg_autoscale_mode off ; done
-      - rados -p pl2 rmsnap snpp
-      - sleep 30
-      - rados df
+      # Create a new (Octopus) pool and snapshot
       - ceph osd pool create oc_pool 1
       - echo "a" >> a.txt
       - rados -p oc_pool put objectone a.txt
-      - rados -p oc_pool mksnap snpp
+      - rados -p oc_pool mksnap oc_snpp
       - echo "b" >> b.txt
       - rados -p oc_pool put objectone b.txt
       - sleep 30
       - rados df
-      - rados -p oc_pool rmsnap snpp
+      # Read and Remove the snapshot (Octopus)
+      - rados -p oc_pool -s oc_snpp get objectone old.txt
+      - cat old.txt
+      - rados -p oc_pool rmsnap oc_snpp
+      - sleep 30
+      - rados df
+      # Read and Remove the snapshot (Nautilus-converted)
+      - rados -p pl2 -s snpp get objectone old_n_converted.txt
+      - cat old_n_converted.txt
+      - rados -p pl2 rmsnap snpp
       - sleep 30
       - rados df
 - ceph.healthy:

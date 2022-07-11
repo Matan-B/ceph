@@ -36,6 +36,7 @@ tasks:
 - exec:
     osd.0:
       - ceph osd set-require-min-compat-client nautilus
+      # Create a new (Octopus) pool and snapshot
       - ceph osd pool create pl2 1
       - echo "a" >> a.txt
       - rados -p pl2 put objectone a.txt
@@ -44,6 +45,9 @@ tasks:
       - rados -p pl2 put objectone b.txt
       - sleep 30
       - rados df
+      # Read from the snapshot (Octopus)
+      - rados -p pl2 -s snpp get objectone old_n.txt
+      - cat old_n.txt
 - print: "**** done ceph"
 - install.upgrade:
     mon.a:
