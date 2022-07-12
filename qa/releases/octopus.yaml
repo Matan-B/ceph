@@ -29,4 +29,5 @@ tasks:
       - rados -p pl2 rmsnap snpp
       - sleep 30
       - rados df
+      - ceph pg dump pgs
 - ceph.healthy:

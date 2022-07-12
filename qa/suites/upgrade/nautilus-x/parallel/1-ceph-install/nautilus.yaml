@@ -49,6 +49,7 @@ tasks:
       - rados -p pl2 put objectone b.txt
       - sleep 30
       - rados df
+      - ceph pg dump pgs
       # Read from the snapshot (Octopus)
       - rados -p pl2 -s snpp get objectone old_n.txt
       - cat old_n.txt
