@@ -700,6 +700,50 @@ PGBackend::write_iertr::future<> PGBackend::writefull(
   return seastar::now();
 }
 
+PGBackend::rollback_ertr::future<> PGBackend::rollback(
+  const SnapSet &ss,
+  ObjectState& os,
+  const OSDOp& osd_op,
+  ceph::os::Transaction& txn,
+  osd_op_params_t& osd_op_params,
+  object_stat_sum_t& delta_stats)
+{
+  const ceph_osd_op& op = osd_op.op;
+  snapid_t snapid = (uint64_t)op.snap.snapid;
+  hobject_t soid = os.oi.soid;
+  assert(soid.is_head());
+  soid.snap = snapid;
+
+  logger().debug("{} deleting {} and rolling back "
+                "to old snap {}", __func__, os.oi.soid);
+
+  // Should we resolve at all?
+  // coid is soid essentially.
+  auto coid = resolve_oid(ss, soid);
+
+  logger().debug("{} WIP {}, {}", __func__, soid , coid);
+
+  // 1) Delete current head
+  txn.remove(coll->get_cid(),
+	     ghobject_t{os.oi.soid, ghobject_t::NO_GEN, shard});
+  // 2) Clone correct snapshot into head
+  // we need the clone Object state which is part of Object context
+  // with_clone_obc?
+
+  // this is temporary -
+  // this is copied from with_clone_obc
+  // better approach is to refactor obc obtaining out of
+  // with_clone_obc and re-use it also here
+  // for now we only try to obtain clone obc from cache.
+  auto [clone, existed] = shard_services.get_cached_obc(*coid);
+
+  txn.clone(coll->get_cid(), ghobject_t{clone->obs.oi.soid}, ghobject_t{os.oi.soid});
+
+  // TODO: 3) Calculate clone_overlaps by following overlaps
+  //          forward from rollback snapshot
+  return seastar::now();
+}
+
 PGBackend::append_ierrorator::future<> PGBackend::append(
   ObjectState& os,
   OSDOp& osd_op,

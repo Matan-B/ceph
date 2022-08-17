@@ -566,6 +566,13 @@ OpsExecuter::do_execute_op(OSDOp& osd_op)
     return do_write_op([this, &osd_op](auto& backend, auto& os, auto& txn) {
       return backend.writefull(os, osd_op, txn, *osd_op_params, delta_stats);
     });
+  case CEPH_OSD_OP_ROLLBACK:
+  {
+    auto ss = obc->get_ro_ss();
+    return do_write_op([this, &osd_op, &ss](auto& backend, auto& os, auto& txn) {
+      return backend.rollback(ss, os, osd_op, txn, *osd_op_params, delta_stats);
+    });
+  }
   case CEPH_OSD_OP_APPEND:
     return do_write_op([this, &osd_op](auto& backend, auto& os, auto& txn) {
       return backend.append(os, osd_op, txn, *osd_op_params, delta_stats);
