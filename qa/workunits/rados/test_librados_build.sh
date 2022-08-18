@@ -17,8 +17,7 @@ hello_world_c.c
 hello_world.cc
 Makefile
 "
-BINARIES_TO_RUN="hello_world_c
-hello_world_cpp
+BINARIES_TO_RUN="hello_world_cpp
 "
 BINARIES="${BINARIES_TO_RUN}hello_radosstriper_cpp
 "
