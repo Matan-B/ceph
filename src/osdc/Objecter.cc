@@ -3496,7 +3496,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
       op->con->revoke_rx_buffer(op->tid);
 #endif
     auto& bl = m->get_data();
-    if (op->outbl->length() == bl.length() &&
+    if (bl.length() && op->outbl->length() == bl.length() &&
 	bl.get_num_buffers() <= 1) {
       // this is here to keep previous users to *relied* on getting data
       // read into existing buffers happy.  Notably,
