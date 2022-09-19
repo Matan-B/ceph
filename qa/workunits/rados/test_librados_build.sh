@@ -71,8 +71,11 @@ pushd $DESTDIR
 case $(distro_id) in
     centos|fedora|rhel|opensuse*|suse|sles)
         install gcc-c++ make libradospp-devel librados-devel;;
-    ubuntu|debian|devuan|softiron)
-        install gcc-11 g++-11 make libradospp-dev librados-dev;;
+    ubuntu)
+        install gcc-11 g++-11 make libradospp-dev librados-dev
+        export CXX_FLAGS="-std=c++20";;
+    debian|devuan|softiron)
+        install gcc g++ make libradospp-dev librados-dev;;
     *)
         echo "$(distro_id) is unknown, $@ will have to be installed manually."
 esac
