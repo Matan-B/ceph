@@ -214,6 +214,7 @@ class OSDThrasher(Thrasher):
         self.live_osds = osd_status['live']
         self.out_osds = osd_status['out']
         self.dead_osds = osd_status['dead']
+        self.protected_osds = []
         self.stopping = False
         self.logger = logger
         self.config = config
@@ -575,6 +576,9 @@ class OSDThrasher(Thrasher):
         """
         if osd is None:
             osd = random.choice(self.dead_osds)
+        if self.protected_osds is not None and osd in self.protected_osds:
+            self.log("Cannot Revive osd %s is protected" % (str(osd)))
+            return
         self.log("Reviving osd %s" % (str(osd),))
         self.ceph_manager.revive_osd(
             osd,
@@ -1175,30 +1179,34 @@ class OSDThrasher(Thrasher):
         a map gap since the mons would have trimmed
         """
         self.log("test_map_discontinuity")
+        self.ceph_manager.raw_cluster_cmd('osd', 'set', 'noscrub')
+        self.ceph_manager.raw_cluster_cmd('osd', 'set', 'nodeep-scrub')
+        timeout=self.config.get('timeout')
+        trim_await=(int(self.config.get("map_discontinuity_sleep_time", 40)))
+
         while len(self.in_osds) < (self.minin + 1):
             self.in_osd()
-        self.log("Waiting for recovery")
-        self.ceph_manager.wait_for_all_osds_up(
-            timeout=self.config.get('timeout')
-            )
+        self.log("Waiting %d seconds for recovery" % (timeout))
+        self.ceph_manager.wait_for_all_osds_up(timeout)
         # now we wait 20s for the pg status to change, if it takes longer,
         # the test *should* fail!
         time.sleep(20)
-        self.ceph_manager.wait_for_clean(
-            timeout=self.config.get('timeout')
-            )
+        self.ceph_manager.wait_for_clean(timeout)
 
         # now we wait 20s for the backfill replicas to hear about the clean
         time.sleep(20)
-        self.log("Recovered, killing an osd")
-        self.kill_osd(mark_down=True, mark_out=True)
-        self.log("Waiting for clean again")
-        self.ceph_manager.wait_for_clean(
-            timeout=self.config.get('timeout')
-            )
-        self.log("Waiting for trim")
-        time.sleep(int(self.config.get("map_discontinuity_sleep_time", 40)))
-        self.revive_osd()
+        osd = random.choice(self.live_osds)
+        self.log("Recovered, Killing osd %s and protecting osd " % (str(osd)))
+        self.protected_osds.append(osd)
+        self.kill_osd(mark_down=True, osd=osd, mark_out=True)
+        self.log("Waiting %d seconds for clean again" % (timeout))
+        self.ceph_manager.wait_for_clean(timeout)
+        self.log("Waiting %d seconds for trim" % (trim_await))
+        time.sleep(trim_await)
+        self.log("Mons should have trimmed, unprotecting and :"
+                 "reviving osd %s" % (str(osd)))
+        self.protected_osds.remove(osd)
+        self.revive_osd(osd=osd)
 
     def choose_action(self):
         """

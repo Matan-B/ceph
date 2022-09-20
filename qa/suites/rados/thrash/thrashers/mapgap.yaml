@@ -1,5 +1,6 @@
 overrides:
   ceph:
+    wait-for-scrub: false
     log-ignorelist:
     - but it is still running
     - objects unfound and apparently lost
@@ -25,3 +26,6 @@ tasks:
     chance_pgnum_shrink: 0.25
     chance_pgpnum_fix: 0.25
     chance_test_map_discontinuity: 2
+    clean_interval: 10
+    map_discontinuity_sleep_time: 300
+    noscrub_toggle_delay: 0
