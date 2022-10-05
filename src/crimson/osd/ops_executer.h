@@ -165,6 +165,15 @@ private:
   };
 
   Ref<PG> pg; // for the sake of object class
+  const struct initial_os_t {
+    bool existed;
+    bool is_whiteout;
+
+    initial_os_t(const ObjectContext& obc)
+      : existed(obc.obs.exists),
+        is_whiteout(obc.obs.oi.is_whiteout()) {
+    }
+  } initial_os;
   ObjectContextRef obc;
   ObjectContextRef clone_obc; // if we create a clone
   ObjectState head_os;
@@ -258,6 +267,7 @@ public:
               const MsgT& msg,
               const SnapContext& snapc)
     : pg(std::move(pg)),
+      initial_os(*obc),
       obc(std::move(obc)),
       op_info(op_info),
       msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg),
