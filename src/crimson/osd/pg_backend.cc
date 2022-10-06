@@ -727,17 +727,18 @@ PGBackend::rollback_ertr::future<> PGBackend::rollback(
   txn.remove(coll->get_cid(),
 	     ghobject_t{os.oi.soid, ghobject_t::NO_GEN, shard});
   // 2) Clone correct snapshot into head
-  // we need the clone Object state which is part of Object context
-  // with_clone_obc?
 
-  // this is temporary -
-  // this is copied from with_clone_obc
-  // better approach is to refactor obc obtaining out of
-  // with_clone_obc and re-use it also here
   // for now we only try to obtain clone obc from cache.
   auto [clone, existed] = shard_services.get_cached_obc(*coid);
+  //auto loaded = get_or_load_obc<RWState::RWREAD>(clone, existed);
+  // WIP:
+  // return loaded.safe_then_interruptible([this, os, txn](auto clone) mutable
+  //-> seastar::future<> {
+    //return std::move(func)(std::move(clone));
+    txn.clone(coll->get_cid(), ghobject_t{clone->obs.oi.soid}, ghobject_t{os.oi.soid});
+  //  return seastar::now();
+  //});
 
-  txn.clone(coll->get_cid(), ghobject_t{clone->obs.oi.soid}, ghobject_t{os.oi.soid});
 
   // TODO: 3) Calculate clone_overlaps by following overlaps
   //          forward from rollback snapshot
@@ -1685,4 +1686,73 @@ std::optional<hobject_t> PGBackend::resolve_oid(
       return std::optional<hobject_t>(soid);
     }
   }
+}
+
+PGBackend::load_obc_iertr::future<crimson::osd::ObjectContextRef>
+PGBackend::load_obc(crimson::osd::ObjectContextRef obc)
+{
+  return this->load_metadata(obc->get_oid()).safe_then_interruptible(
+    [obc=std::move(obc)](auto md)
+    -> load_obc_ertr::future<crimson::osd::ObjectContextRef> {
+    const hobject_t& oid = md->os.oi.soid;
+    logger().debug(
+      "load_obc: loaded obs {} for {}", md->os.oi, oid);
+    if (oid.is_head()) {
+      if (!md->ssc) {
+        logger().error(
+          "load_obc: oid {} missing snapsetcontext", oid);
+        return crimson::ct_error::object_corrupted::make();
+      }
+      obc->set_head_state(std::move(md->os), std::move(md->ssc));
+    } else {
+      obc->set_clone_state(std::move(md->os));
+    }
+    logger().debug(
+      "load_obc: returning obc {} for {}",
+      obc->obs.oi, obc->obs.oi.soid);
+    return load_obc_ertr::make_ready_future<
+      crimson::osd::ObjectContextRef>(obc);
+  });
+}
+
+template<RWState::State State>
+PGBackend::load_obc_iertr::future<crimson::osd::ObjectContextRef>
+PGBackend::get_or_load_obc(
+    crimson::osd::ObjectContextRef obc,
+    bool existed)
+{
+  auto loaded = load_obc_iertr::make_ready_future<crimson::osd::ObjectContextRef>(obc);
+  if (existed) {
+    logger().debug("with_clone_obc: found {} in cache", obc->get_oid());
+  } else {
+    logger().debug("with_clone_obc: cache miss on {}", obc->get_oid());
+    loaded = obc->template with_promoted_lock<State, crimson::osd::IOInterruptCondition>(
+      [obc, this] {
+      return load_obc(obc);
+    });
+  }
+  return loaded;
+}
+
+PGBackend::load_obc_iertr::future<>
+PGBackend::reload_obc(crimson::osd::ObjectContext& obc)
+{
+  assert(obc.is_head());
+  return this->load_metadata(obc.get_oid()).safe_then_interruptible<false>([&obc](auto md)
+    -> load_obc_ertr::future<> {
+    logger().debug(
+      "{}: reloaded obs {} for {}",
+      __func__,
+      md->os.oi,
+      obc.get_oid());
+    if (!md->ssc) {
+      logger().error(
+        "{}: oid {} missing snapsetcontext",
+        __func__,
+        obc.get_oid());
+      return crimson::ct_error::object_corrupted::make();
+    }
+    obc.set_head_state(std::move(md->os), std::move(md->ssc));
+    return load_obc_ertr::now();
+  });
 }

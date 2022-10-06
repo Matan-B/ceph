@@ -52,6 +52,12 @@ public:
     ::crimson::interruptible::interruptible_errorator<
       ::crimson::osd::IOInterruptCondition,
       load_metadata_ertr>;
+  using load_obc_ertr = crimson::errorator<
+    crimson::ct_error::object_corrupted>;
+  using load_obc_iertr =
+    ::crimson::interruptible::interruptible_errorator<
+      ::crimson::osd::IOInterruptCondition,
+      load_obc_ertr>;
   using interruptor =
     ::crimson::interruptible::interruptor<
       ::crimson::osd::IOInterruptCondition>;
@@ -362,6 +368,19 @@ public:
   static std::optional<hobject_t> resolve_oid(
     const SnapSet &snapset,
     const hobject_t &oid);
+
+
+  template<RWState::State State>
+  load_obc_iertr::future<crimson::osd::ObjectContextRef>
+  get_or_load_obc(
+    crimson::osd::ObjectContextRef head_obc, bool existed);
+
+  load_obc_iertr::future<crimson::osd::ObjectContextRef>
+  load_obc(crimson::osd::ObjectContextRef obc);
+
+  load_obc_iertr::future<>
+  reload_obc(crimson::osd::ObjectContext& obc);
+
 protected:
   const shard_id_t shard;
   CollectionRef coll;
