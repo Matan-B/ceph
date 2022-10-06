@@ -346,6 +346,9 @@ public:
   };
   virtual void on_actingset_changed(peering_info_t pi) = 0;
   virtual void on_activate_complete();
+  static std::optional<hobject_t> resolve_oid(
+    const SnapSet &snapset,
+    const hobject_t &oid);
 protected:
   const shard_id_t shard;
   CollectionRef coll;
