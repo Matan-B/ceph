@@ -186,6 +186,13 @@ public:
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params,
     object_stat_sum_t& delta_stats);
+  remove_iertr::future<> rollback(
+    const SnapSet &ss,
+    ObjectState& os,
+    const OSDOp& osd_op,
+    ceph::os::Transaction& txn,
+    osd_op_params_t& osd_op_params,
+    object_stat_sum_t& delta_stats);
   write_iertr::future<> truncate(
     ObjectState& os,
     const OSDOp& osd_op,
