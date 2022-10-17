@@ -166,21 +166,12 @@ private:
   };
 
   Ref<PG> pg; // for the sake of object class
-  const struct initial_os_t {
-    bool existed;
-    bool is_whiteout;
-
-    initial_os_t(const ObjectContext& obc)
-      : existed(obc.obs.exists),
-        is_whiteout(obc.obs.oi.is_whiteout()) {
-    }
-  } initial_os;
   ObjectContextRef obc;
-  ObjectContextRef clone_obc; // if we create a clone
-  ObjectState head_os;
   const OpInfo& op_info;
-  ceph::static_ptr<ExecutableMessage,
-                   sizeof(ExecutableMessagePimpl<void>)> msg;
+  using abstracted_msg_t =
+    ceph::static_ptr<ExecutableMessage,
+                     sizeof(ExecutableMessagePimpl<void>)>;
+  abstracted_msg_t msg;
   std::optional<osd_op_params_t> osd_op_params;
   bool user_modify = false;
   ceph::os::Transaction txn;
@@ -189,6 +180,35 @@ private:
   size_t num_write = 0;   ///< count update ops
 
   SnapContext snapc; // writer snap context
+  struct CloningContext {
+    SnapSet new_snapset;
+    pg_log_entry_t log_entry;
+
+    void apply_to(
+      const eversion_t& at_version,
+      std::vector<pg_log_entry_t>& log_entries,
+      ObjectContext& processed_obc) &&;
+  };
+  std::unique_ptr<CloningContext> cloning_ctx;
+
+  std::unique_ptr<CloningContext> execute_clone(
+    const SnapContext& snapc,
+    const ObjectState& initial_obs,
+    const SnapSet& initial_snapset,
+    PGBackend& backend,
+    ceph::os::Transaction& txn);
+
+  static bool should_clone(const ObjectContext& initial_obc,
+                           const SnapContext& snapc) {
+    // clone?
+    return initial_obc.obs.exists
+      && !initial_obc.obs.oi.is_whiteout()       // at the begin really exists
+      && snapc.snaps.size()                      // there are snaps
+      && snapc.snaps[0] > initial_obc.ssc->snapset.seq; // existing obj is old
+  }
+
+  void commit_clone_n_snapset(
+    std::vector<pg_log_entry_t>& log_entries);
 
   // this gizmo could be wrapped in std::optional for the sake of lazy
   // initialization. we don't need it for ops that doesn't have effect
@@ -260,6 +280,12 @@ private:
   interruptible_errorated_future<osd_op_errorator>
   do_execute_op(OSDOp& osd_op);
 
+  OpsExecuter(Ref<PG> pg,
+              ObjectContextRef obc,
+              const OpInfo& op_info,
+              abstracted_msg_t&& msg,
+              const SnapContext& snapc);
+
 public:
   template <class MsgT>
   OpsExecuter(Ref<PG> pg,
@@ -267,12 +293,14 @@ public:
               const OpInfo& op_info,
               const MsgT& msg,
               const SnapContext& snapc)
-    : pg(std::move(pg)),
-      initial_os(*obc),
-      obc(std::move(obc)),
-      op_info(op_info),
-      msg(std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{}, &msg),
-      snapc(snapc) {
+    : OpsExecuter(
+        std::move(pg),
+        std::move(obc),
+        op_info,
+        abstracted_msg_t{
+          std::in_place_type_t<ExecutableMessagePimpl<MsgT>>{},
+          &msg},
+        snapc) {
   }
 
   template <class Func>
@@ -326,13 +354,7 @@ public:
 
   version_t get_last_user_version() const;
 
-  const SnapContext& get_snapc() const {
-    return snapc;
-  }
-
-  void make_writeable(std::vector<pg_log_entry_t>& log_entries);
-
-  const object_info_t prepare_clone(
+  std::pair<object_info_t, ObjectContextRef> prepare_clone(
     const hobject_t& coid);
 
   void apply_stats();
@@ -389,10 +411,15 @@ OpsExecuter::flush_changes_n_do_ops_effects(
     interruptor::make_ready_future<rep_op_fut_tuple>(
 	seastar::now(),
 	interruptor::make_interruptible(osd_op_errorator::now()));
+  if (cloning_ctx) {
+    ceph_assert(want_mutate);
+  }
   if (want_mutate) {
-    fill_op_params_bump_pg_version();
+    if (user_modify) {
+      osd_op_params->user_at_version = osd_op_params->at_version.version;
+    }
     auto log_entries = prepare_transaction(ops);
-    make_writeable(log_entries);
+    commit_clone_n_snapset(log_entries);
     apply_stats();
     auto [submitted, all_completed] = std::forward<MutFunc>(mut_func)(std::move(txn),
                                                     std::move(obc),
