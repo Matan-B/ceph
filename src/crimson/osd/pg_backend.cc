@@ -1203,9 +1203,9 @@ PGBackend::rm_xattr(
 }
 
 void PGBackend::clone(
-  object_info_t& snap_oi,
-  ObjectState& os,
-  ObjectState& d_os,
+  /* const */object_info_t& snap_oi,
+  const ObjectState& os,
+  const ObjectState& d_os,
   ceph::os::Transaction& txn)
 {
   // Prepend the cloning operation to txn
