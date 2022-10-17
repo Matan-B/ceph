@@ -1208,17 +1208,14 @@ void PGBackend::clone(
   const ObjectState& d_os,
   ceph::os::Transaction& txn)
 {
-  // Prepend the cloning operation to txn
-  ceph::os::Transaction c_txn;
-  c_txn.clone(coll->get_cid(), ghobject_t{os.oi.soid}, ghobject_t{d_os.oi.soid});
-  // Operations will be removed from txn while appending
-  c_txn.append(txn);
-  txn = std::move(c_txn);
-
-  ceph::bufferlist bv;
-  snap_oi.encode_no_oid(bv, CEPH_FEATURES_ALL);
-
-  txn.setattr(coll->get_cid(), ghobject_t{d_os.oi.soid}, OI_ATTR, bv);
+  // BEWARE: crimson, in constrast to the classical OSD, does the cloning
+  // before any other operation.
+  txn.clone(coll->get_cid(), ghobject_t{os.oi.soid}, ghobject_t{d_os.oi.soid});
+  {
+    ceph::bufferlist bv;
+    snap_oi.encode_no_oid(bv, CEPH_FEATURES_ALL);
+    txn.setattr(coll->get_cid(), ghobject_t{d_os.oi.soid}, OI_ATTR, bv);
+  }
   txn.rmattr(coll->get_cid(), ghobject_t{d_os.oi.soid}, SS_ATTR);
 }
 
