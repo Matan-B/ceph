@@ -31,6 +31,7 @@ namespace ceph::os {
 namespace crimson::osd {
   class ShardServices;
   class PG;
+  class ObjectContextLoader;
 }
 
 class PGBackend
@@ -198,7 +199,8 @@ public:
     const OSDOp& osd_op,
     ceph::os::Transaction& txn,
     osd_op_params_t& osd_op_params,
-    object_stat_sum_t& delta_stats);
+    object_stat_sum_t& delta_stats,
+    crimson::osd::ObjectContextLoader& obc_loader);
   write_iertr::future<> truncate(
     ObjectState& os,
     const OSDOp& osd_op,
