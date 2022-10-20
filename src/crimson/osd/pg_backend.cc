@@ -1653,3 +1653,39 @@ void PGBackend::on_activate_complete() {
   peering.reset();
 }
 
+std::optional<hobject_t> PGBackend::resolve_oid(
+  const SnapSet &ss,
+  const hobject_t &oid)
+{
+  logger().debug("{} oid.snap={},head snapset.seq={}",
+                 __func__, oid.snap, ss.seq);
+  if (oid.snap > ss.seq) {
+    // Because oid.snap > ss.seq, we are trying to read from a snapshot
+    // taken after the most recent write to this object. Read from head.
+    return oid.get_head();
+  } else {
+    // which clone would it be?
+    auto clone = std::lower_bound(
+      begin(ss.clones), end(ss.clones),
+      oid.snap);
+    if (clone == end(ss.clones)) {
+      // Doesn't exist, > last clone, < ss.seq
+      return std::nullopt;
+    }
+    auto citer = ss.clone_snaps.find(*clone);
+    // TODO: how do we want to handle this kind of logic error?
+    ceph_assert(citer != ss.clone_snaps.end());
+
+    if (std::find(
+	  citer->second.begin(),
+	  citer->second.end(),
+	  *clone) == citer->second.end()) {
+      return std::nullopt;
+    } else {
+      auto soid = oid;
+      soid.snap = *clone;
+      return std::optional<hobject_t>(soid);
+    }
+  }
+}
+
