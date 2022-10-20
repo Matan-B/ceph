@@ -186,7 +186,13 @@ public:
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params,
     object_stat_sum_t& delta_stats);
-  remove_iertr::future<> rollback(
+  using rollback_ertr = crimson::errorator<
+    crimson::ct_error::enoent>;
+  using rollback_iertr =
+    ::crimson::interruptible::interruptible_errorator<
+      ::crimson::osd::IOInterruptCondition,
+      rollback_ertr>;
+  rollback_iertr::future<> rollback(
     const SnapSet &ss,
     ObjectState& os,
     const OSDOp& osd_op,
