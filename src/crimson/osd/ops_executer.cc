@@ -871,7 +871,7 @@ std::pair<object_info_t, ObjectContextRef> OpsExecuter::prepare_clone(
 {
   object_info_t static_snap_oi(coid);
   static_snap_oi.version = osd_op_params->at_version;
-  static_snap_oi.prior_version = obc->obs.oi.version;
+  static_snap_oi.prior_version = obc->obs.oi.prior_version;
   static_snap_oi.copy_user_bits(obc->obs.oi);
   if (static_snap_oi.is_whiteout()) {
     // clone shouldn't be marked as whiteout
