@@ -21,6 +21,7 @@
 #include "crimson/osd/object_context.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/osd/osd_operations/osdop_params.h"
+#include "crimson/osd/object_context_loader.h"
 
 struct hobject_t;
 

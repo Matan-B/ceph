@@ -221,7 +221,7 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
   }).then_interruptible([this, pg, &ihref]() mutable {
     return pg->already_complete(m->get_reqid()).then_interruptible(
       [this, pg, &ihref](auto completed) mutable
-      -> PG::load_obc_iertr::future<seq_mode_t> {
+      -> ObjectContextLoader::load_obc_iertr::future<seq_mode_t> {
       if (completed) {
         auto reply = crimson::make_message<MOSDOpReply>(
           m.get(), completed->err, pg->get_osdmap_epoch(),
@@ -233,7 +233,7 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
       } else {
         return ihref.enter_stage<interruptor>(pp(*pg).get_obc, *this
 	).then_interruptible(
-          [this, pg, &ihref]() mutable -> PG::load_obc_iertr::future<seq_mode_t> {
+          [this, pg, &ihref]() mutable -> ObjectContextLoader::load_obc_iertr::future<seq_mode_t> {
           logger().debug("{}: got obc lock", *this);
           op_info.set_from_op(&*m, *pg->get_osdmap());
           // XXX: `do_with()` is just a workaround for `with_obc_func_t` imposing
@@ -241,7 +241,7 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
           return seastar::do_with(
 	    seq_mode_t{},
 	    [this, &pg, &ihref](seq_mode_t& mode) {
-	      return pg->with_locked_obc(
+	      return pg->obc_loader.with_locked_obc(
 		m->get_hobj(), op_info,
 		[this, pg, &mode, &ihref](auto obc) mutable {
 		  return ihref.enter_stage<interruptor>(pp(*pg).process, *this
@@ -254,7 +254,7 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
 		      });
 		    });
 		}).safe_then_interruptible([&mode] {
-		  return PG::load_obc_iertr::make_ready_future<seq_mode_t>(mode);
+		  return ObjectContextLoader::load_obc_iertr::make_ready_future<seq_mode_t>(mode);
 		});
 	    });
 	  });
@@ -262,7 +262,7 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
       });
   }).safe_then_interruptible([pg] (const seq_mode_t mode) {
     return seastar::make_ready_future<seq_mode_t>(mode);
-  }, PG::load_obc_ertr::all_same_way([this, pg=std::move(pg)](const auto &code) {
+  }, ObjectContextLoader::load_obc_ertr::all_same_way([this, pg=std::move(pg)](const auto &code) {
     logger().error("ClientRequest saw error code {}", code);
     return reply_op_error(pg, -code.value());
   }));

@@ -69,7 +69,7 @@ seastar::future<> InternalClientRequest::start()
           }).then_interruptible([this] {
             return enter_stage<interruptor>(
               pp().get_obc
-            ).then_interruptible([this] () -> PG::load_obc_iertr::future<> {
+            ).then_interruptible([this] () -> ObjectContextLoader::load_obc_iertr::future<> {
               logger().debug("{}: getting obc lock", *this);
               return seastar::do_with(create_osd_ops(),
                 [this](auto& osd_ops) mutable {
@@ -78,7 +78,9 @@ seastar::future<> InternalClientRequest::start()
                 [[maybe_unused]] const int ret = op_info.set_from_op(
                   std::as_const(osd_ops), pg->get_pgid().pgid, *pg->get_osdmap());
                 assert(ret == 0);
-                return pg->with_locked_obc(get_target_oid(), op_info,
+                //return pg->get_backend().obc_loader.with_locked_obc(
+                return pg->with_locked_obc(
+                  get_target_oid(), op_info,
                   [&osd_ops, this](auto obc) {
                   return enter_stage<interruptor>(pp().process).then_interruptible(
                     [obc=std::move(obc), &osd_ops, this] {

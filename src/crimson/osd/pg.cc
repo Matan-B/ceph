@@ -119,7 +119,8 @@ PG::PG(
       osdmap,
       this,
       this),
-    wait_for_active_blocker(this)
+    wait_for_active_blocker(this),
+    obc_loader{shard_services, *backend}
 {
   peering_state.set_backend_predicates(
     new ReadablePredicate(pg_whoami),
@@ -1360,6 +1361,7 @@ seastar::future<> PG::stop()
 
 void PG::on_change(ceph::os::Transaction &t) {
   logger().debug("{} {}:", *this, __func__);
+  //for (auto& obc : backend->obc_loader.obc_set_accessing) {
   for (auto& obc : obc_set_accessing) {
     obc.interrupt(::crimson::common::actingset_changed(is_primary()));
   }

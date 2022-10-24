@@ -751,6 +751,8 @@ private:
 
   PGActivationBlocker wait_for_active_blocker;
 
+  ObjectContextLoader obc_loader;
+
   friend std::ostream& operator<<(std::ostream&, const PG& pg);
   friend class ClientRequest;
   friend struct CommonClientRequest;
