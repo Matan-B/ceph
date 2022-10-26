@@ -5412,6 +5412,8 @@ public:
   int32_t whoami = -1;    // my role in this fs.
   epoch_t current_epoch = 0;             // most recent epoch
   epoch_t oldest_map = 0, newest_map = 0;    // oldest/newest maps we have.
+  epoch_t osdmap_trimmed_to = 0; // determined by the monitor
+
   double weight = 0.0;
 
   CompatSet compat_features;
@@ -5434,11 +5436,11 @@ inline std::ostream& operator<<(std::ostream& out, const OSDSuperblock& sb)
 {
   return out << "sb(" << sb.cluster_fsid
              << " osd." << sb.whoami
-	     << " " << sb.osd_fsid
+             << " " << sb.osd_fsid
              << " e" << sb.current_epoch
              << " [" << sb.oldest_map << "," << sb.newest_map << "]"
-	     << " lci=[" << sb.mounted << "," << sb.clean_thru << "]"
-             << ")";
+             << " lci=[" << sb.mounted << "," << sb.clean_thru << "]"
+             << " trimmed" << sb.osdmap_trimmed_to << ")";
 }
 
 

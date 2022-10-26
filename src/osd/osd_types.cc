@@ -5681,7 +5681,7 @@ void pg_hit_set_history_t::generate_test_instances(list<pg_hit_set_history_t*>& 
 
 void OSDSuperblock::encode(ceph::buffer::list &bl) const
 {
-  ENCODE_START(9, 5, bl);
+  ENCODE_START(10, 5, bl);
   encode(cluster_fsid, bl);
   encode(whoami, bl);
   encode(current_epoch, bl);
@@ -5696,6 +5696,7 @@ void OSDSuperblock::encode(ceph::buffer::list &bl) const
   encode((uint32_t)0, bl);  // map<int64_t,epoch_t> pool_last_epoch_marked_full
   encode(purged_snaps_last, bl);
   encode(last_purged_snaps_scrub, bl);
+  encode(osdmap_trimmed_to, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -5735,6 +5736,11 @@ void OSDSuperblock::decode(ceph::buffer::list::const_iterator &bl)
   } else {
     purged_snaps_last = 0;
   }
+  if (struct_v >= 10) {
+    decode(osdmap_trimmed_to, bl);
+  } else {
+    osdmap_trimmed_to = 0;
+  }
   DECODE_FINISH(bl);
 }
 
@@ -5746,6 +5752,7 @@ void OSDSuperblock::dump(Formatter *f) const
   f->dump_int("current_epoch", current_epoch);
   f->dump_int("oldest_map", oldest_map);
   f->dump_int("newest_map", newest_map);
+  f->dump_int("osdmap_trimmed_to", osdmap_trimmed_to);
   f->dump_float("weight", weight);
   f->open_object_section("compat");
   compat_features.dump(f);

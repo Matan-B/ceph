@@ -1337,6 +1337,7 @@ MOSDMap *OSDService::build_incremental_map_msg(epoch_t since, epoch_t to,
 			   osdmap->get_encoding_features());
   m->oldest_map = max_oldest_map;
   m->newest_map = sblock.newest_map;
+  m->trimmed_to_map = sblock.osdmap_trimmed_to;
 
   int max = cct->_conf->osd_map_message_max;
   ssize_t max_bytes = cct->_conf->osd_map_message_max_bytes;
@@ -1419,6 +1420,7 @@ void OSDService::send_incremental_map(epoch_t since, Connection *con,
 			       osdmap->get_encoding_features());
       m->oldest_map = max_oldest_map;
       m->newest_map = sblock.newest_map;
+      m->trimmed_to_map = sblock.osdmap_trimmed_to;
       get_map_bl(to, m->maps[to]);
       send_map(m, con);
       return;
@@ -7853,8 +7855,8 @@ void OSD::handle_osd_map(MOSDMap *m)
   epoch_t last = m->get_last();
   dout(3) << "handle_osd_map epochs [" << first << "," << last << "], i have "
 	  << superblock.newest_map
-	  << ", src has [" << m->oldest_map << "," << m->newest_map << "]"
-	  << dendl;
+	  << ", src has [" << m->oldest_map << "," << m->newest_map << "], "
+	  << "trimmed_to_map epoch " << m->trimmed_to_map << dendl;
 
   logger->inc(l_osd_map);
   logger->inc(l_osd_mape, last - first + 1);
@@ -7863,6 +7865,10 @@ void OSD::handle_osd_map(MOSDMap *m)
   if (service.max_oldest_map < m->oldest_map) {
     service.max_oldest_map = m->oldest_map;
     ceph_assert(service.max_oldest_map >= superblock.oldest_map);
+  }
+  if (m->trimmed_to_map) {
+    ceph_assert(superblock.osdmap_trimmed_to <= m->trimmed_to_map);
+    superblock.osdmap_trimmed_to = m->trimmed_to_map;
   }
 
   // make sure there is something new, here, before we bother flushing

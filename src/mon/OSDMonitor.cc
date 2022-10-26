@@ -2884,6 +2884,7 @@ bool OSDMonitor::preprocess_get_osdmap(MonOpRequestRef op)
   }
   reply->oldest_map = first;
   reply->newest_map = last;
+  reply->trimmed_to_map = get_trim_to();
   mon.send_reply(op, reply);
   return true;
 }
@@ -4461,6 +4462,7 @@ MOSDMap *OSDMonitor::build_latest_full(uint64_t features)
   get_version_full(osdmap.get_epoch(), features, r->maps[osdmap.get_epoch()]);
   r->oldest_map = get_first_committed();
   r->newest_map = osdmap.get_epoch();
+  r->trimmed_to_map = get_trim_to();
   return r;
 }
 
@@ -4471,6 +4473,7 @@ MOSDMap *OSDMonitor::build_incremental(epoch_t from, epoch_t to, uint64_t featur
   MOSDMap *m = new MOSDMap(mon.monmap->fsid, features);
   m->oldest_map = get_first_committed();
   m->newest_map = osdmap.get_epoch();
+  m->trimmed_to_map = get_trim_to();
 
   for (epoch_t e = to; e >= from && e > 0; e--) {
     bufferlist bl;
@@ -4549,6 +4552,7 @@ void OSDMonitor::send_incremental(epoch_t first,
     MOSDMap *m = new MOSDMap(osdmap.get_fsid(), features);
     m->oldest_map = get_first_committed();
     m->newest_map = osdmap.get_epoch();
+    m->trimmed_to_map = get_trim_to();
 
     first = get_first_committed();
     bufferlist bl;

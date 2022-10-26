@@ -916,11 +916,11 @@ void PeeringState::clear_primary_state()
 /// return [start,end) bounds for required past_intervals
 static pair<epoch_t, epoch_t> get_required_past_interval_bounds(
   const pg_info_t &info,
-  epoch_t oldest_map) {
+  epoch_t trimmed_to_epoch) {
   epoch_t start = std::max(
     info.history.last_epoch_clean ? info.history.last_epoch_clean :
     info.history.epoch_pool_created,
-    oldest_map);
+    trimmed_to_epoch);
   epoch_t end = std::max(
     info.history.same_interval_since,
     info.history.epoch_pool_created);
@@ -930,15 +930,16 @@ static pair<epoch_t, epoch_t> get_required_past_interval_bounds(
 
 void PeeringState::check_past_interval_bounds() const
 {
-  auto oldest_epoch = pl->oldest_stored_osdmap();
+  // see: doc/dev/osd_internals/past_intervals.rst
+  auto trimmed_to_epoch = pl->get_osdmap_trimmed_to();
   auto rpib = get_required_past_interval_bounds(
     info,
-    oldest_epoch);
+    trimmed_to_epoch);
   if (rpib.first >= rpib.second) {
     // do not warn if the start bound is dictated by oldest_map; the
     // past intervals are presumably appropriate given the pg info.
     if (!past_intervals.empty() &&
-	rpib.first > oldest_epoch) {
+	rpib.first > trimmed_to_epoch) {
       pl->get_clog_error() << info.pgid << " required past_interval bounds are"
 			     << " empty [" << rpib << ") but past_intervals is not: "
 			     << past_intervals;

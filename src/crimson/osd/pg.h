@@ -367,6 +367,12 @@ public:
     return 0;
   }
 
+  epoch_t get_osdmap_trimmed_to() final {
+    // TODO
+    return 0;
+  }
+
+
   void on_backfill_reserved() final {
     recovery_handler->on_backfill_reserved();
   }
