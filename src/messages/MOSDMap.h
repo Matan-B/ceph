@@ -91,6 +91,8 @@ public:
     }
     if (header.version >= 5) {
       decode(trimmed_to_map, p);
+    } else {
+      trimmed_to_map = 0;
     }
   }
   void encode_payload(uint64_t features) override {
