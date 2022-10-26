@@ -6,12 +6,13 @@ Purpose
 -------
 
 There are two situations where we need to consider the set of all acting-set
-OSDs for a PG back to some epoch e:
+OSDs for a PG back to some epoch ``e``:
 
  * During peering, we need to consider the acting set for every epoch back to
-   ``last_epoch_started``, the last epoch in which the PG completed pering and
-   became active.  (see last_epoch_started.rst for a detailed explanation).
- * During recovery, we need to consider the acting set fo every epoch back to
+   ``last_epoch_started``, the last epoch in which the PG completed peering and
+   became active.
+   (see :doc:`/dev/osd_internals/last_epoch_started` for a detailed explanation)
+ * During recovery, we need to consider the acting set for every epoch back to
    ``last_epoch_clean``, the last epoch at which all of the OSDs in the acting
    set were fully recovered, and the acting set was full.
 
@@ -56,7 +57,7 @@ that all PGs have been clean at that or a later epoch (min_last_epoch_clean).
 (See OSDMonitor::get_trim_to).
 
 The Monitor quorum determines min_last_epoch_clean through MOSDBeacon messages
-sent periodicaly by each OSDs.  Each message contains a set of PGs for which
+sent periodically by each OSDs.  Each message contains a set of PGs for which
 the OSD is primary at that moment as well as the min_last_epoch_clean across
 that set.  The Monitors track these values in OSDMonitor::last_epoch_clean.
 
@@ -64,7 +65,7 @@ There is a subtlety in the min_last_epoch_clean value used by the OSD to
 populate the MOSDBeacon.  OSD::collect_pg_stats invokes PG::with_pg_stats to
 obtain the lec value, which actually uses
 pg_stat_t::get_effective_last_epoch_clean() rather than
-info.history.last_epoch_clean.  If the PG is curently clean,
+info.history.last_epoch_clean.  If the PG is currently clean,
 pg_stat_t::get_effective_last_epoch_clean() is the current epoch rather than
 last_epoch_clean -- this works because the PG is clean at that epoch and it
 allows OSDMaps to be trimmed during periods where OSDMaps are being created
@@ -75,14 +76,16 @@ Back to PastIntervals
 ---------------------
 
 We can now understand our second trimming case above.  If OSDMaps have been
-trimmed up to epoch e, we know that the PG must have been clean at some epoch
->= e (indeed, *all* PGs must have been), so we can drop our PastIntevals.
+trimmed up to epoch ``e``, we know that the PG must have been clean at some epoch
+>= ``e`` (indeed, **all** PGs must have been), so we can drop our PastIntevals.
 
 This dependency also pops up in PeeringState::check_past_interval_bounds().
 PeeringState::get_required_past_interval_bounds takes as a parameter
 osdmap_trimmed_to, which comes from OSDSuperblock::osdmap_trimmed_to.  We use
 osdmap_trimmed_to rather than oldest_map because we don't necessarily trim all
-the way to to MOSDMap::oldest_map to avoid doing too much work at once.  For
-this reason, a specific OSD's oldest_map can lag osdmap_trimmed_to for a while.
-See https://tracker.ceph.com/issues/49689 for an example.
+the way to MOSDMap::oldest_map. In order to avoid doing too much work at once
+we limit the amount of osdmaps trimmed using ``osd_target_transaction_size``
+in OSD::trim_maps.  For this reason, a specific OSD's oldest_map can lag
+osdmap_trimmed_to() for a while. See https://tracker.ceph.com/issues/49689
+for an example.
 
