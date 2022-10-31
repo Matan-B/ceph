@@ -78,7 +78,6 @@ seastar::future<> InternalClientRequest::start()
                 [[maybe_unused]] const int ret = op_info.set_from_op(
                   std::as_const(osd_ops), pg->get_pgid().pgid, *pg->get_osdmap());
                 assert(ret == 0);
-                //return pg->get_backend().obc_loader.with_locked_obc(
                 return pg->with_locked_obc(
                   get_target_oid(), op_info,
                   [&osd_ops, this](auto obc) {
@@ -108,7 +107,7 @@ seastar::future<> InternalClientRequest::start()
                   });
                 });
               });
-            }).handle_error_interruptible(PG::load_obc_ertr::all_same_way([] {
+            }).handle_error_interruptible(ObjectContextLoader::load_obc_ertr::all_same_way([] {
               return seastar::now();
             })).then_interruptible([] {
               return seastar::stop_iteration::yes;

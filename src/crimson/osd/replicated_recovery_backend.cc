@@ -9,6 +9,7 @@
 #include "crimson/osd/pg.h"
 #include "crimson/osd/pg_backend.h"
 #include "replicated_recovery_backend.h"
+#include "crimson/osd/object_context_loader.h"
 
 #include "msg/Message.h"
 
@@ -33,7 +34,7 @@ ReplicatedRecoveryBackend::recover_object(
   // start tracking the recovery of soid
   return maybe_pull_missing_obj(soid, need).then_interruptible([this, soid, need] {
     logger().debug("recover_object: loading obc: {}", soid);
-    return pg.with_head_obc<RWState::RWREAD>(soid,
+    return pg.obc_loader.with_head_obc<RWState::RWREAD>(soid,
       [this, soid, need](auto obc) {
       logger().debug("recover_object: loaded obc: {}", obc->obs.oi.soid);
       auto& recovery_waiter = get_recovering(soid);
@@ -41,7 +42,7 @@ ReplicatedRecoveryBackend::recover_object(
       recovery_waiter.obc->wait_recovery_read();
       return maybe_push_shards(soid, need);
     }).handle_error_interruptible(
-      crimson::osd::PG::load_obc_ertr::all_same_way([soid](auto& code) {
+      crimson::osd::ObjectContextLoader::load_obc_ertr::all_same_way([soid](auto& code) {
       // TODO: may need eio handling?
       logger().error("recover_object saw error code {}, ignoring object {}",
                      code, soid);
@@ -678,13 +679,13 @@ ReplicatedRecoveryBackend::_handle_pull_response(
   auto prepare_waiter = interruptor::make_interruptible(
       seastar::make_ready_future<>());
   if (pi.recovery_progress.first) {
-    prepare_waiter = pg.with_head_obc<RWState::RWNONE>(
+    prepare_waiter = pg.obc_loader.with_head_obc<RWState::RWNONE>(
       pi.recovery_info.soid, [&pi, &recovery_waiter, &pop](auto obc) {
         pi.obc = obc;
         recovery_waiter.obc = obc;
         obc->obs.oi.decode_no_oid(pop.attrset.at(OI_ATTR), pop.soid);
         pi.recovery_info.oi = obc->obs.oi;
-        return crimson::osd::PG::load_obc_ertr::now();
+        return crimson::osd::ObjectContextLoader::load_obc_ertr::now();
       }).handle_error_interruptible(crimson::ct_error::assert_all{});
   };
   return prepare_waiter.then_interruptible([this, &pi, &pop, t, response]() mutable {

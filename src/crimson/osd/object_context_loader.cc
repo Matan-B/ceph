@@ -31,24 +31,6 @@ ObjectContextLoader::ObjectContextLoader(
 {
 }
 
-hobject_t ObjectContextLoader::get_oid(const hobject_t& hobj)
-{
-  return hobj.snap == CEPH_SNAPDIR ? hobj.get_head() : hobj;
-}
-
-RWState::State ObjectContextLoader::get_lock_type(const OpInfo &op_info)
-{
-
-  if (op_info.rwordered() && op_info.may_read()) {
-    return RWState::RWEXCL;
-  } else if (op_info.rwordered()) {
-    return RWState::RWWRITE;
-  } else {
-    ceph_assert(op_info.may_read());
-    return RWState::RWREAD;
-  }
-}
-
 template<RWState::State State>
 ObjectContextLoader::load_obc_iertr::future<>
 ObjectContextLoader::with_head_obc(ObjectContextRef obc, bool existed, with_obc_func_t&& func)
@@ -62,29 +44,18 @@ ObjectContextLoader::with_head_obc(ObjectContextRef obc, bool existed, with_obc_
       [func = std::move(func)](auto obc) {
       return std::move(func)(std::move(obc));
     });
-  }).finally([this, pgref=boost::intrusive_ptr<ObjectContextLoader>{this}, obc=std::move(obc)] {
+  }).finally([this, obc=std::move(obc)] {
     logger().debug("with_head_obc: released {}", obc->get_oid());
     obc->remove_from(obc_set_accessing);
   });
 }
 
 template<RWState::State State>
-ObjectContextLoader::load_obc_iertr::future<>
-ObjectContextLoader::with_head_obc(hobject_t oid, with_obc_func_t&& func)
+ObjectContextLoader::load_obc_iertr::future<> ObjectContextLoader::with_head_obc(hobject_t oid, with_obc_func_t&& func)
 {
   auto [obc, existed] =
     shard_services.get_cached_obc(std::move(oid));
   return with_head_obc<State>(std::move(obc), existed, std::move(func));
-}
-
-template<RWState::State State>
-ObjectContextLoader::interruptible_future<>
-ObjectContextLoader::with_existing_head_obc(ObjectContextRef obc, with_obc_func_t&& func)
-{
-  constexpr bool existed = true;
-  return with_head_obc<State>(
-    std::move(obc), existed, std::move(func)
-  ).handle_error_interruptible(load_obc_ertr::assert_all{"can't happen"});
 }
 
 template<RWState::State State>
@@ -119,23 +90,6 @@ ObjectContextLoader::with_clone_obc(hobject_t oid, with_obc_func_t&& func)
 // explicitly instantiate the used instantiations
 template ObjectContextLoader::load_obc_iertr::future<>
 ObjectContextLoader::with_head_obc<RWState::RWNONE>(hobject_t, with_obc_func_t&&);
-
-template<RWState::State State>
-ObjectContextLoader::interruptible_future<>
-ObjectContextLoader::with_existing_clone_obc(ObjectContextRef clone, with_obc_func_t&& func)
-{
-  assert(clone);
-  assert(clone->get_head_obc());
-  assert(!clone->get_oid().is_head());
-  return with_existing_head_obc<RWState::RWREAD>(clone->get_head_obc(),
-    [clone=std::move(clone), func=std::move(func)] ([[maybe_unused]] auto head) {
-    assert(head == clone->get_head_obc());
-    return clone->template with_lock<State>(
-      [clone=std::move(clone), func=std::move(func)] {
-      return std::move(func)(std::move(clone));
-    });
-  });
-}
 
 ObjectContextLoader::load_obc_iertr::future<crimson::osd::ObjectContextRef>
 ObjectContextLoader::load_obc(ObjectContextRef obc)
@@ -206,56 +160,4 @@ ObjectContextLoader::reload_obc(crimson::osd::ObjectContext& obc) const
   });
 }
 
-ObjectContextLoader::load_obc_iertr::future<>
-ObjectContextLoader::with_locked_obc(const hobject_t &hobj,
-                    const OpInfo &op_info,
-                    with_obc_func_t &&f)
-{
-  if (__builtin_expect(stopping, false)) {
-    throw crimson::common::system_shutdown_exception();
-  }
-  const hobject_t oid = get_oid(hobj);
-  switch (get_lock_type(op_info)) {
-  case RWState::RWREAD:
-    if (oid.is_head()) {
-      return with_head_obc<RWState::RWREAD>(oid, std::move(f));
-    } else {
-      return with_clone_obc<RWState::RWREAD>(oid, std::move(f));
-    }
-  case RWState::RWWRITE:
-    if (oid.is_head()) {
-      return with_head_obc<RWState::RWWRITE>(oid, std::move(f));
-    } else {
-      return with_clone_obc<RWState::RWWRITE>(oid, std::move(f));
-    }
-  case RWState::RWEXCL:
-    if (oid.is_head()) {
-      return with_head_obc<RWState::RWEXCL>(oid, std::move(f));
-    } else {
-      return with_clone_obc<RWState::RWEXCL>(oid, std::move(f));
-    }
-  default:
-    ceph_abort();
-  };
-}
-
-template <RWState::State State>
-ObjectContextLoader::interruptible_future<>
-ObjectContextLoader::with_locked_obc(ObjectContextRef obc, with_obc_func_t &&f)
-{
-  // TODO: a question from rebase: do we really need such checks when
-  // the interruptible stuff is being used?
-  if (__builtin_expect(stopping, false)) {
-    throw crimson::common::system_shutdown_exception();
-  }
-  if (obc->is_head()) {
-    return with_existing_head_obc<State>(obc, std::move(f));
-  } else {
-    return with_existing_clone_obc<State>(obc, std::move(f));
-  }
-}
-
-// explicitly instantiate the used instantiations
-template ObjectContextLoader::interruptible_future<>
-ObjectContextLoader::with_locked_obc<RWState::RWEXCL>(ObjectContextRef, with_obc_func_t&&);
 }

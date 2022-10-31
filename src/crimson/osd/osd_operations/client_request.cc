@@ -241,7 +241,7 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
           return seastar::do_with(
 	    seq_mode_t{},
 	    [this, &pg, &ihref](seq_mode_t& mode) {
-	      return pg->obc_loader.with_locked_obc(
+	      return pg->with_locked_obc(
 		m->get_hobj(), op_info,
 		[this, pg, &mode, &ihref](auto obc) mutable {
 		  return ihref.enter_stage<interruptor>(pp(*pg).process, *this

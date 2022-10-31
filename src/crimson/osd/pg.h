@@ -36,6 +36,7 @@
 #include "crimson/osd/pg_recovery.h"
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
+#include "crimson/osd/object_context_loader.h"
 
 class MQuery;
 class OSDMap;
@@ -506,47 +507,19 @@ public:
   static hobject_t get_oid(const hobject_t& hobj);
   static RWState::State get_lock_type(const OpInfo &op_info);
 
-  using load_obc_ertr = crimson::errorator<
-    crimson::ct_error::enoent,
-    crimson::ct_error::object_corrupted>;
-  using load_obc_iertr =
-    ::crimson::interruptible::interruptible_errorator<
-      ::crimson::osd::IOInterruptCondition,
-      load_obc_ertr>;
   using interruptor = ::crimson::interruptible::interruptor<
     ::crimson::osd::IOInterruptCondition>;
 
-  template<RWState::State State>
-  load_obc_iertr::future<crimson::osd::ObjectContextRef>
-  get_or_load_obc(
-    crimson::osd::ObjectContextRef head_obc, bool existed);
-
-  load_obc_iertr::future<crimson::osd::ObjectContextRef>
-  load_obc(ObjectContextRef obc);
-
-  load_obc_iertr::future<>
-  reload_obc(crimson::osd::ObjectContext& obc) const;
-
 public:
-  using with_obc_func_t =
-    std::function<load_obc_iertr::future<> (ObjectContextRef)>;
-
   using obc_accessing_list_t = boost::intrusive::list<
     ObjectContext,
     ObjectContext::obc_accessing_option_t>;
   obc_accessing_list_t obc_set_accessing;
 
-  template<RWState::State State>
-  load_obc_iertr::future<> with_head_obc(hobject_t oid, with_obc_func_t&& func);
-
-  template<RWState::State State>
-  interruptible_future<> with_locked_obc(
-    ObjectContextRef obc,
-    with_obc_func_t&& f);
-  load_obc_iertr::future<> with_locked_obc(
+  ObjectContextLoader::load_obc_iertr::future<> with_locked_obc(
     const hobject_t &hobj,
     const OpInfo &op_info,
-    with_obc_func_t&& f);
+    ObjectContextLoader::with_obc_func_t&& f);
 
   interruptible_future<> handle_rep_op(Ref<MOSDRepOp> m);
   void handle_rep_op_reply(const MOSDRepOpReply& m);
@@ -566,27 +539,6 @@ public:
     eversion_t &version);
 
 private:
-  template<RWState::State State>
-  load_obc_iertr::future<> with_head_obc(
-    ObjectContextRef obc,
-    bool existed,
-    with_obc_func_t&& func);
-  template<RWState::State State>
-  interruptible_future<> with_existing_head_obc(
-    ObjectContextRef head,
-    with_obc_func_t&& func);
-
-  template<RWState::State State>
-  load_obc_iertr::future<> with_clone_obc(hobject_t oid, with_obc_func_t&& func);
-  template<RWState::State State>
-  interruptible_future<> with_existing_clone_obc(
-    ObjectContextRef clone, with_obc_func_t&& func);
-
-  load_obc_iertr::future<ObjectContextRef> get_locked_obc(
-    Operation *op,
-    const hobject_t &oid,
-    RWState::State type);
-
   void fill_op_params_bump_pg_version(
     osd_op_params_t& osd_op_p,
     const bool user_modify);
@@ -750,8 +702,9 @@ private:
   bool stopping = false;
 
   PGActivationBlocker wait_for_active_blocker;
-
+public:
   ObjectContextLoader obc_loader;
+private:
 
   friend std::ostream& operator<<(std::ostream&, const PG& pg);
   friend class ClientRequest;
