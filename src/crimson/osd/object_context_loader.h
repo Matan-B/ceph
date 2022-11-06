@@ -39,6 +39,13 @@ public:
   template<RWState::State State>
   load_obc_iertr::future<> with_clone_obc(hobject_t oid, with_obc_func_t&& func);
 
+  // Use this variant in the case where the head object
+  // obc is already locked. Avoid nesting
+  // with_head_obc() as in using with_clone_obc().
+  load_obc_iertr::future<> with_clone_obc_only(const SnapSet& snap_set,
+                                               hobject_t oid,
+                                               with_obc_func_t&& func);
+
   template<RWState::State State>
   load_obc_iertr::future<> with_head_obc(
     ObjectContextRef obc,

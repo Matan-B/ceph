@@ -60,6 +60,26 @@ using crimson::common::local_conf;
       });
     });
 }
+
+  ObjectContextLoader::load_obc_iertr::future<>
+  ObjectContextLoader::with_clone_obc_only(const SnapSet& snap_set, hobject_t oid, with_obc_func_t&& func)
+  {
+    auto coid = PGBackend::resolve_oid(snap_set, oid);
+    if (!coid) {
+      logger().error("with_clone_obc_only: {} clone not found", coid);
+      return load_obc_iertr::future<>{crimson::ct_error::enoent::make()};
+    }
+    auto [clone, existed] = shard_services.get_cached_obc(*coid);
+    return clone->template with_lock<RWState::RWREAD, IOInterruptCondition>(
+      [existed=existed, clone=std::move(clone),
+       func=std::move(func), this]() -> load_obc_iertr::future<> {
+      auto loaded = get_or_load_obc<RWState::RWREAD>(clone, existed);
+      return loaded.safe_then_interruptible([func = std::move(func)](auto clone) {
+        return std::move(func)(std::move(clone));
+      });
+    });
+  }
+
   template<RWState::State State>
   ObjectContextLoader::load_obc_iertr::future<>
   ObjectContextLoader::with_head_obc(hobject_t oid, with_obc_func_t&& func)
