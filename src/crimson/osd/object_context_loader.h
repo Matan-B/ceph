@@ -58,5 +58,7 @@ private:
   ShardServices &shard_services;
   PGBackend* backend;
   obc_accessing_list_t obc_set_accessing;
+
+  friend class PG;
 };
 }

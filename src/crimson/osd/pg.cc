@@ -1224,7 +1224,7 @@ seastar::future<> PG::stop()
 
 void PG::on_change(ceph::os::Transaction &t) {
   logger().debug("{} {}:", *this, __func__);
-  for (auto& obc : obc_set_accessing) {
+  for (auto& obc : obc_loader.obc_set_accessing) {
     obc.interrupt(::crimson::common::actingset_changed(is_primary()));
   }
   recovery_backend->on_peering_interval_change(t);
