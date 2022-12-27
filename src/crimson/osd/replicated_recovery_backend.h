@@ -53,6 +53,7 @@ protected:
     eversion_t need,
     pg_shard_t pg_shard);
   void prepare_pull(
+    crimson::osd::ObjectContextRef obc,
     PullOp& pull_op,
     pull_info_t& pull_info,
     const hobject_t& soid,
