@@ -31,22 +31,24 @@ ReplicatedRecoveryBackend::recover_object(
   // always add_recovering(soid) before recover_object(soid)
   assert(is_recovering(soid));
   // start tracking the recovery of soid
-  return maybe_pull_missing_obj(soid, need).then_interruptible([this, soid, need] {
-    logger().debug("recover_object: loading obc: {}", soid);
-    return pg.obc_loader.with_obc<RWState::RWREAD>(soid,
-      [this, soid, need](auto obc) {
-      logger().debug("recover_object: loaded obc: {}", obc->obs.oi.soid);
-      auto& recovery_waiter = get_recovering(soid);
-      recovery_waiter.obc = obc;
-      recovery_waiter.obc->wait_recovery_read();
+  logger().debug("recover_object: loading obc: {}", soid);
+  return pg.obc_loader.with_obc<RWState::RWREAD>(soid,
+    [this, soid, need](auto obc) {
+    logger().debug("recover_object: loaded obc: {}", obc->obs.oi.soid);
+    //todo: rename to get_recovering_ref/ recovery_waiter_ref
+    auto& recovery_waiter = get_recovering(soid);
+    recovery_waiter.obc = obc;
+    recovery_waiter.obc->wait_recovery_read();
+    return maybe_pull_missing_obj(soid, need
+    ).then_interruptible([this, soid, need] {
       return maybe_push_shards(soid, need);
-    }).handle_error_interruptible(
-      crimson::osd::PG::load_obc_ertr::all_same_way([soid](auto& code) {
-      // TODO: may need eio handling?
-      logger().error("recover_object saw error code {}, ignoring object {}",
-                     code, soid);
-    }));
-  });
+    });
+  }).handle_error_interruptible(
+    crimson::osd::PG::load_obc_ertr::all_same_way([soid](auto& code) {
+    // TODO: may need eio handling?
+    logger().error("recover_object saw error code {}, ignoring object {}",
+                   code, soid);
+  }));
 }
 
 RecoveryBackend::interruptible_future<>
@@ -109,8 +111,10 @@ ReplicatedRecoveryBackend::maybe_pull_missing_obj(
   const hobject_t& soid,
   eversion_t need)
 {
+  logger().debug("{}: {}, {}", __func__, soid, need);
   pg_missing_tracker_t local_missing = pg.get_local_missing();
   if (!local_missing.is_missing(soid)) {
+    // object is not missing, don't pull
     return seastar::make_ready_future<>();
   }
   PullOp pull_op;
@@ -118,7 +122,8 @@ ReplicatedRecoveryBackend::maybe_pull_missing_obj(
   recovery_waiter.pull_info =
     std::make_optional<RecoveryBackend::pull_info_t>();
   auto& pull_info = *recovery_waiter.pull_info;
-  prepare_pull(pull_op, pull_info, soid, need);
+  auto obc = recovery_waiter.obc;
+  prepare_pull(obc, pull_op, pull_info, soid, need);
   auto msg = crimson::make_message<MOSDPGPull>();
   msg->from = pg.get_pg_whoami();
   msg->set_priority(pg.get_recovery_op_priority());
@@ -340,7 +345,9 @@ ReplicatedRecoveryBackend::prep_push(
   });
 }
 
-void ReplicatedRecoveryBackend::prepare_pull(PullOp& pull_op,
+void ReplicatedRecoveryBackend::prepare_pull(
+  crimson::osd::ObjectContextRef obc,
+  PullOp& pull_op,
   pull_info_t& pull_info,
   const hobject_t& soid,
   eversion_t need) {
@@ -351,13 +358,30 @@ void ReplicatedRecoveryBackend::prepare_pull(PullOp& pull_op,
   auto m = pg.get_missing_loc_shards();
   pg_shard_t fromshard = *(m[soid].begin());
 
-  //TODO: skipped snap objects case for now
-  pull_op.recovery_info.copy_subset.insert(0, (uint64_t) -1);
-  pull_op.recovery_info.copy_subset.intersection_of(
-    missing_iter->second.clean_regions.get_dirty_regions());
-  pull_op.recovery_info.size = ((uint64_t) -1);
-  pull_op.recovery_info.object_exist =
+  ObjectRecoveryInfo recovery_info;
+  if (soid.is_snap()) {
+    assert(!local_missing.is_missing(soid.get_head()));
+    // we can get the head from obc
+    auto head_obc = obc->get_head_obc();
+    assert(head_obc);
+    auto ssc = head_obc->ssc;
+    assert(ssc);
+    recovery_info.ss = ssc->snapset;
+    calc_clone_subsets();
+    logger().debug("{}: pulling {}", __func__, recovery_info);
+    ceph_assert(ssc->snapset.clone_size.count(soid.snap));
+    recovery_info.size = ssc->snapset.clone_size[soid.snap];
+  } else {
+    // pulling head or unversioned object.
+    // always pull the whole thing.
+    recovery_info.copy_subset.insert(0, (uint64_t) -1);
+    recovery_info.copy_subset.intersection_of(
+      missing_iter->second.clean_regions.get_dirty_regions());
+    recovery_info.size = ((uint64_t) -1);
+  }
+  recovery_info.object_exist =
     missing_iter->second.clean_regions.object_is_exist();
+  pull_op.recovery_info = recovery_info;
   pull_op.recovery_info.soid = soid;
   pull_op.soid = soid;
   pull_op.recovery_progress.data_complete = false;
@@ -368,8 +392,17 @@ void ReplicatedRecoveryBackend::prepare_pull(PullOp& pull_op,
 
   pull_info.from = fromshard;
   pull_info.soid = soid;
+  pull_info.head_ctx = obc->get_head_obc();
   pull_info.recovery_info = pull_op.recovery_info;
   pull_info.recovery_progress = pull_op.recovery_progress;
+}
+
+void ReplicatedRecoveryBackend::calc_clone_subsets() {
+  logger().debug("{}: ", __func__);
+}
+
+void ReplicatedRecoveryBackend::calc_head_subsets() {
+  logger().debug("{}: ", __func__);
 }
 
 RecoveryBackend::interruptible_future<PushOp>

@@ -51,7 +51,10 @@ protected:
     const hobject_t& soid,
     eversion_t need,
     pg_shard_t pg_shard);
+  void calc_clone_subsets();
+  void calc_head_subsets();
   void prepare_pull(
+    crimson::osd::ObjectContextRef obc,
     PullOp& pull_op,
     pull_info_t& pull_info,
     const hobject_t& soid,
