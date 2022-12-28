@@ -62,7 +62,8 @@ ReplicatedRecoveryBackend::maybe_push_shards(
     return interruptor::parallel_for_each(
       shards,
       [this, need, soid](auto shard) {
-      return prep_push(soid, need, shard).then_interruptible([this, soid, shard](auto push) {
+      return prep_push_to_replica(soid, need, shard
+      ).then_interruptible([this, soid, shard](auto push) {
         auto msg = crimson::make_message<MOSDPGPush>();
         msg->from = pg.get_pg_whoami();
         msg->pgid = pg.get_pgid();
@@ -296,26 +297,85 @@ ReplicatedRecoveryBackend::recover_delete(
   });
 }
 
+/*
+ * intelligently push an object to a replica.  make use of existing
+ * clones/heads and dup data ranges where possible.
+ */
 RecoveryBackend::interruptible_future<PushOp>
-ReplicatedRecoveryBackend::prep_push(
+ReplicatedRecoveryBackend::prep_push_to_replica(
   const hobject_t& soid,
   eversion_t need,
   pg_shard_t pg_shard)
 {
   logger().debug("{}: {}, {}", __func__, soid, need);
+  auto& recovery_waiter = get_recovering(soid);
+  auto& obc = recovery_waiter.obc;
+  map<hobject_t, interval_set<uint64_t>> clone_subsets;
+  interval_set<uint64_t> data_subset;
+
+  // are we doing a clone on the replica?
+  if (soid.snap && soid.snap < CEPH_NOSNAP) {
+    hobject_t head = soid;
+    head.snap = CEPH_NOSNAP;
+
+    // try to base push off of clones that succeed/preceed poid
+    // we need the head (and current SnapSet) locally to do that.
+    if (pg.get_local_missing().is_missing(head)) {
+      logger().debug("{} missing head {}, pushing raw clone",
+                     __func__, head);
+      if (obc->obs.oi.size) {
+        data_subset.insert(0, obc->obs.oi.size);
+      }
+      return prep_push(soid,
+                       need,
+                       pg_shard,
+                       data_subset,
+                       clone_subsets);
+    }
+    auto ssc = obc->ssc;
+    ceph_assert(ssc);
+    logger().debug("push_to_replica snapset is {}",
+                   ssc->snapset);
+    assert(pg.get_shard_missing().contains(pg_shard));
+    //push_op->recovery_info.ss = ssc->snapset;
+    //calc_clone_subsets(data_subset, clone_subsets);
+  } else if (soid.snap == CEPH_NOSNAP) {
+    // pushing head or unversioned object.
+    // base this on partially on replica's clones?
+    auto ssc = obc->ssc;
+    ceph_assert(ssc);
+    logger().debug("push_to_replica snapset is {}",
+                   ssc->snapset);
+    //calc_head_subsets(data_subset, clone_subsets);
+  }
+  return prep_push(soid,
+                   need,
+                   pg_shard,
+                   data_subset,
+                   clone_subsets);
+}
+
+RecoveryBackend::interruptible_future<PushOp>
+ReplicatedRecoveryBackend::prep_push(
+  const hobject_t& soid,
+  eversion_t need,
+  pg_shard_t pg_shard,
+  interval_set<uint64_t> &data_subset,
+  map<hobject_t, interval_set<uint64_t>>& clone_subsets)
+{
+  logger().debug("{}: {}, {}", __func__, soid, need);
 
   auto& recovery_waiter = get_recovering(soid);
   auto& obc = recovery_waiter.obc;
-  interval_set<uint64_t> data_subset;
-  if (obc->obs.oi.size) {
-    data_subset.insert(0, obc->obs.oi.size);
-  }
+
   const auto& missing = pg.get_shard_missing().find(pg_shard)->second;
   const auto it = missing.get_items().find(soid);
   assert(it != missing.get_items().end());
-  data_subset.intersection_of(it->second.clean_regions.get_dirty_regions());
-  logger().debug("prep_push: {} data_subset {} to {}",
-                 soid, data_subset, pg_shard);
+
+  //this is the calc_head it will be seperated:
+  //data_subset.intersection_of(it->second.clean_regions.get_dirty_regions());
+  //logger().debug("prep_push: {} data_subset {} to {}",
+  //               soid, data_subset, pg_shard);
 
   auto& push_info = recovery_waiter.pushing[pg_shard];
   pg.begin_peer_recover(pg_shard, soid);
@@ -326,6 +386,7 @@ ReplicatedRecoveryBackend::prep_push(
   push_info.obc = obc;
   push_info.recovery_info.size = obc->obs.oi.size;
   push_info.recovery_info.copy_subset = data_subset;
+  push_info.recovery_info.clone_subset = clone_subsets;
   push_info.recovery_info.soid = soid;
   push_info.recovery_info.oi = obc->obs.oi;
   push_info.recovery_info.version = obc->obs.oi.version;
