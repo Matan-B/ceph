@@ -48,10 +48,15 @@ protected:
     Ref<MOSDPGRecoveryDelete> m);
   interruptible_future<> handle_recovery_delete_reply(
     Ref<MOSDPGRecoveryDeleteReply> m);
+  interruptible_future<PushOp> prep_push_to_replica(
+    const hobject_t& soid,
+    eversion_t need,
+    std::pair<pg_shard_t, pg_missing_t> pg_shard);
   interruptible_future<PushOp> prep_push(
     const hobject_t& soid,
     eversion_t need,
-    pg_shard_t pg_shard);
+    pg_shard_t pg_shard,
+    const crimson::osd::subsets_t& subsets);
   void prepare_pull(
     crimson::osd::ObjectContextRef obc,
     PullOp& pull_op,
