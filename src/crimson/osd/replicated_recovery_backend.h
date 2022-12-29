@@ -58,7 +58,7 @@ protected:
     pull_info_t& pull_info,
     const hobject_t& soid,
     eversion_t need);
-  std::vector<pg_shard_t> get_shards_to_push(
+  std::map<pg_shard_t, pg_missing_t> get_shards_to_push(
     const hobject_t& soid) const;
   interruptible_future<PushOp> build_push_op(
     const ObjectRecoveryInfo& recovery_info,

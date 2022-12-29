@@ -62,7 +62,7 @@ ReplicatedRecoveryBackend::maybe_push_shards(
     return interruptor::parallel_for_each(
       shards,
       [this, need, soid](auto shard) {
-      return prep_push(soid, need, shard).then_interruptible([this, soid, shard](auto push) {
+      return prep_push(soid, need, shard.first).then_interruptible([this, soid, shard](auto push) {
         auto msg = crimson::make_message<MOSDPGPush>();
         msg->from = pg.get_pg_whoami();
         msg->pgid = pg.get_pgid();
@@ -71,12 +71,12 @@ ReplicatedRecoveryBackend::maybe_push_shards(
         msg->pushes.push_back(std::move(push));
         msg->set_priority(pg.get_recovery_op_priority());
         return interruptor::make_interruptible(
-            shard_services.send_to_osd(shard.osd,
+            shard_services.send_to_osd(shard.first.osd,
                                        std::move(msg),
                                        pg.get_osdmap_epoch()))
         .then_interruptible(
           [this, soid, shard] {
-          return get_recovering(soid).wait_for_pushes(shard);
+          return get_recovering(soid).wait_for_pushes(shard.first);
         });
       });
     });
@@ -625,10 +625,10 @@ ReplicatedRecoveryBackend::read_omap_for_push_op(
   });
 }
 
-std::vector<pg_shard_t>
+std::map<pg_shard_t, pg_missing_t>
 ReplicatedRecoveryBackend::get_shards_to_push(const hobject_t& soid) const
 {
-  std::vector<pg_shard_t> shards;
+  std::map<pg_shard_t, pg_missing_t> shards;
   assert(pg.get_acting_recovery_backfill().size() > 0);
   for (const auto& peer : pg.get_acting_recovery_backfill()) {
     if (peer == pg.get_pg_whoami())
@@ -637,7 +637,7 @@ ReplicatedRecoveryBackend::get_shards_to_push(const hobject_t& soid) const
       pg.get_shard_missing().find(peer);
     assert(shard_missing != pg.get_shard_missing().end());
     if (shard_missing->second.is_missing(soid)) {
-      shards.push_back(shard_missing->first);
+      shards.emplace(*shard_missing);
     }
   }
   return shards;
