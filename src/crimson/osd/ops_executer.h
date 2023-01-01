@@ -375,6 +375,8 @@ public:
     MutFunc&& mut_func) &&;
   std::vector<pg_log_entry_t> prepare_transaction(
     const std::vector<OSDOp>& ops);
+  void prepare_remove(bool& whiteout,
+                      int& num_bytes);
   void fill_op_params_bump_pg_version();
 
   ObjectContextRef get_obc() const {

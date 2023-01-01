@@ -504,7 +504,9 @@ PGBackend::write_iertr::future<> PGBackend::_writefull(
       coll->get_cid(), ghobject_t{os.oi.soid}, 0, bl.length(),
       bl, flags);
     update_size_and_usage(
-      delta_stats, os.oi, 0,
+      delta_stats,
+      osd_op_params.modified_ranges,
+      os.oi, 0,
       bl.length(), true);
     osd_op_params.clean_regions.mark_data_region_dirty(
       0,
@@ -541,7 +543,9 @@ PGBackend::write_iertr::future<> PGBackend::_truncate(
       coll->get_cid(),
       ghobject_t{os.oi.soid}, offset);
     if (os.oi.size > offset) {
-      // TODO: modified_ranges.union_of(trim);
+      interval_set<uint64_t> trim;
+      trim.insert(offset, os.oi.size - offset);
+      osd_op_params.modified_ranges.union_of(trim);
       osd_op_params.clean_regions.mark_data_region_dirty(
         offset,
 	os.oi.size - offset);
@@ -579,9 +583,19 @@ bool PGBackend::maybe_create_new_object(
 }
 
 void PGBackend::update_size_and_usage(object_stat_sum_t& delta_stats,
+  interval_set<uint64_t>& modified,
   object_info_t& oi, uint64_t offset,
   uint64_t length, bool write_full)
 {
+  interval_set<uint64_t> ch;
+  if (write_full) {
+    if (oi.size) {
+      ch.insert(0, oi.size);
+    } else if (length) {
+      ch.insert(offset, length);
+    }
+    modified.union_of(ch);
+  }
   if (write_full ||
       (offset + length > oi.size && length)) {
     uint64_t new_size = offset + length;
@@ -679,12 +693,14 @@ PGBackend::write_iertr::future<> PGBackend::write(
                    ghobject_t{os.oi.soid}, op.extent.truncate_size);
       if (op.extent.truncate_size != os.oi.size) {
         os.oi.size = length;
-        if (op.extent.truncate_size > os.oi.size) {
-          osd_op_params.clean_regions.mark_data_region_dirty(os.oi.size,
-              op.extent.truncate_size - os.oi.size);
-        } else {
-          osd_op_params.clean_regions.mark_data_region_dirty(op.extent.truncate_size,
-              os.oi.size - op.extent.truncate_size);
+        if (op.extent.truncate_size < os.oi.size) {
+          interval_set<uint64_t> trim;
+          trim.insert(op.extent.truncate_size,
+            os.oi.size - op.extent.truncate_size);
+          osd_op_params.modified_ranges.union_of(trim);
+          osd_op_params.clean_regions.mark_data_region_dirty(
+            op.extent.truncate_size, os.oi.size - op.extent.truncate_size);
+          os.oi.clear_data_digest();
         }
       }
       truncate_update_size_and_usage(delta_stats, os.oi, op.extent.truncate_size);
@@ -703,10 +719,12 @@ PGBackend::write_iertr::future<> PGBackend::write(
   } else {
     txn.write(coll->get_cid(), ghobject_t{os.oi.soid},
 	      offset, length, std::move(buf), op.flags);
-    update_size_and_usage(delta_stats, os.oi, offset, length);
+    update_size_and_usage(delta_stats, osd_op_params.modified_ranges,
+                          os.oi, offset, length);
   }
   osd_op_params.clean_regions.mark_data_region_dirty(op.extent.offset,
 						     op.extent.length);
+  logger().debug("{} clean_regions modified", __func__);
 
   return seastar::now();
 }
@@ -736,7 +754,8 @@ PGBackend::interruptible_future<> PGBackend::write_same(
   txn.write(coll->get_cid(), ghobject_t{os.oi.soid},
             op.writesame.offset, len,
             std::move(repeated_indata), op.flags);
-  update_size_and_usage(delta_stats, os.oi, op.writesame.offset, len);
+  update_size_and_usage(delta_stats, osd_op_params.modified_ranges,
+                        os.oi, op.writesame.offset, len);
   osd_op_params.clean_regions.mark_data_region_dirty(op.writesame.offset, len);
   return seastar::now();
 }
@@ -803,13 +822,14 @@ PGBackend::rollback_iertr::future<> PGBackend::rollback(
     // TODO: implement me!
     static_cast<void>(clone_obc);
     return remove_iertr::now();
-  }, crimson::ct_error::enoent::handle([this, &os, &txn, &delta_stats] {
+  }, crimson::ct_error::enoent::handle([this, &os, &txn, &delta_stats, &osd_op_params] {
     // there's no snapshot here, or there's no object.
     // if there's no snapshot, we delete the object; otherwise, do nothing.
     logger().debug("rollback: deleting head on {}"
                    " because got ENOENT|whiteout on obc lookup",
                    os.oi.soid);
-    return remove(os, txn, delta_stats, true /*whiteout*/);
+    // wip: remove properly when this commit will be rebased
+    return remove(os, txn, osd_op_params, delta_stats, true, 0 /*whiteout*/); //wipwipwip
   }), mocked_load_clone_obc_ertr::assert_all{
     "unexpected error code in rollback"
   });
@@ -831,8 +851,9 @@ PGBackend::append_ierrorator::future<> PGBackend::append(
     txn.write(coll->get_cid(), ghobject_t{os.oi.soid},
               os.oi.size /* offset */, op.extent.length,
               std::move(osd_op.indata), op.flags);
-    update_size_and_usage(delta_stats, os.oi, os.oi.size,
-      op.extent.length);
+    update_size_and_usage(delta_stats,
+                          osd_op_params.modified_ranges,
+                          os.oi, os.oi.size, op.extent.length);
     osd_op_params.clean_regions.mark_data_region_dirty(os.oi.size,
                                                        op.extent.length);
   }
@@ -889,7 +910,9 @@ PGBackend::write_iertr::future<> PGBackend::zero(
            ghobject_t{os.oi.soid},
            op.extent.offset,
            op.extent.length);
-  // TODO: modified_ranges.union_of(zeroed);
+  interval_set<uint64_t> ch;
+  ch.insert(op.extent.offset, op.extent.length);
+  osd_op_params.modified_ranges.union_of(ch);
   osd_op_params.clean_regions.mark_data_region_dirty(op.extent.offset,
 						     op.extent.length);
   delta_stats.num_wr++;
@@ -943,7 +966,10 @@ PGBackend::remove(ObjectState& os, ceph::os::Transaction& txn)
 
 PGBackend::remove_iertr::future<>
 PGBackend::remove(ObjectState& os, ceph::os::Transaction& txn,
-  object_stat_sum_t& delta_stats, bool whiteout)
+  osd_op_params_t& osd_op_params,
+  object_stat_sum_t& delta_stats,
+  bool whiteout,
+  int num_bytes)
 {
   if (!os.exists) {
     return crimson::ct_error::enoent::make();
@@ -955,11 +981,19 @@ PGBackend::remove(ObjectState& os, ceph::os::Transaction& txn,
   }
   txn.remove(coll->get_cid(),
 	     ghobject_t{os.oi.soid, ghobject_t::NO_GEN, shard});
-  delta_stats.num_bytes -= os.oi.size;
+
+  if (os.oi.size > 0) {
+    interval_set<uint64_t> ch;
+    ch.insert(0, os.oi.size);
+    osd_op_params.modified_ranges.union_of(ch);
+    osd_op_params.clean_regions.mark_data_region_dirty(0, os.oi.size);
+  }
+  osd_op_params.clean_regions.mark_omap_dirty();
+  delta_stats.num_wr++;
+  delta_stats.num_bytes -= num_bytes;
   os.oi.size = 0;
   os.oi.new_object();
 
-  // todo: clone_overlap
   if (whiteout) {
     logger().debug("{} setting whiteout on {} ",__func__, os.oi.soid);
     os.oi.set_flag(object_info_t::FLAG_WHITEOUT);
