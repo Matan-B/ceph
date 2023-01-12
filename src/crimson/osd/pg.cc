@@ -133,8 +133,10 @@ PG::PG(
       osdmap,
       this,
       this),
+    obc_registry{
+      local_conf()},
     obc_loader{
-      shard_services,
+      obc_registry,
       backend.get()},
     wait_for_active_blocker(this)
 {
