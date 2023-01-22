@@ -531,6 +531,9 @@ public:
     with_obc_func_t&& f);
 
   interruptible_future<> handle_rep_op(Ref<MOSDRepOp> m);
+
+  load_obc_iertr::future<> replica_reload_repop_obc(
+    const std::vector<pg_log_entry_t> &logv);
   void handle_rep_op_reply(const MOSDRepOpReply& m);
   interruptible_future<> do_update_log_missing(Ref<MOSDPGUpdateLogMissing> m);
   interruptible_future<> do_update_log_missing_reply(

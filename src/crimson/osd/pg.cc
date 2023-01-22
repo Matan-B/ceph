@@ -1063,6 +1063,35 @@ PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
     });
 }
 
+PG::load_obc_iertr::future<>
+PG::replica_reload_repop_obc(
+  const std::vector<pg_log_entry_t> &logv) {
+  if (is_primary()) { // or ec
+    return PG::load_obc_ertr::now();
+  }
+  logger().debug("{} clearing {} entries", __func__, logv.size());
+  std::set<ObjectContextRef> obc_reload_targets;
+  for (auto &&e: logv) {
+    /* Reload invalid obc from registry */
+    logger().debug(" {} get_object_boundary(from): {} "
+                   " head version(to): {}",
+                   e.soid,
+                   e.soid.get_object_boundary(),
+                   e.soid.get_head());
+    obc_registry.range(
+      e.soid.get_object_boundary(),
+      e.soid.get_head(),
+      [this, &obc_reload_targets] (ObjectContextRef obc) {
+      assert(obc);
+      obc_reload_targets.insert(obc);
+    });
+  }
+  return interruptor::parallel_for_each(obc_reload_targets,
+    [this] (auto& obc) {
+      return obc_loader.reload_obc(*obc);
+  });
+}
+
 void PG::handle_rep_op_reply(const MOSDRepOpReply& m)
 {
   if (!can_discard_replica_op(m)) {
