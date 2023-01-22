@@ -1037,30 +1037,56 @@ PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
 	crimson::common::system_shutdown_exception());
   }
 
+  logger().debug("{}: {}", __func__, *req);
   if (can_discard_replica_op(*req)) {
     return seastar::now();
   }
 
-  ceph::os::Transaction txn;
-  auto encoded_txn = req->get_data().cbegin();
-  decode(txn, encoded_txn);
-  auto p = req->logbl.cbegin();
-  std::vector<pg_log_entry_t> log_entries;
-  decode(log_entries, p);
-  peering_state.append_log(std::move(log_entries), req->pg_trim_to,
-      req->version, req->min_last_complete_ondisk, txn, !txn.empty(), false);
-  logger().debug("PG::handle_rep_op: do_transaction...");
-  return interruptor::make_interruptible(shard_services.get_store().do_transaction(
-	coll_ref, std::move(txn))).then_interruptible(
+  return seastar::do_with(ceph::os::Transaction(),
+                          std::vector<pg_log_entry_t>(),
+  [this, req](auto& txn, auto& log_entries) {
+    auto encoded_txn = req->get_data().cbegin();
+    decode(txn, encoded_txn);
+    auto p = req->logbl.cbegin();
+    decode(log_entries, p);
+    return replica_reload_repop_obc(log_entries
+    ).handle_error_interruptible(
+      PG::load_obc_ertr::all_same_way([] {
+          return seastar::now();
+      })
+    ).then_interruptible([req, &log_entries, &txn, this] {
+      log_operation(
+      std::move(log_entries),
+      req->pg_trim_to,
+      req->version,
+      req->min_last_complete_ondisk,
+      !txn.empty(),
+      txn,
+      false);
+      logger().debug("PG::handle_rep_op: do_transaction...");
+      return interruptor::make_interruptible(
+        shard_services.get_store().do_transaction(
+          coll_ref, std::move(txn))
+      ).then_interruptible(
       [req, lcod=peering_state.get_info().last_complete, this] {
-      peering_state.update_last_complete_ondisk(lcod);
-      const auto map_epoch = get_osdmap_epoch();
-      auto reply = crimson::make_message<MOSDRepOpReply>(
-        req.get(), pg_whoami, 0,
-	map_epoch, req->get_min_epoch(), CEPH_OSD_FLAG_ONDISK);
-      reply->set_last_complete_ondisk(lcod);
-      return shard_services.send_to_osd(req->from.osd, std::move(reply), map_epoch);
+        peering_state.update_last_complete_ondisk(lcod);
+        const auto map_epoch = get_osdmap_epoch();
+        auto reply =
+          crimson::make_message<MOSDRepOpReply>(
+            req.get(),
+            pg_whoami,
+            0,
+            map_epoch,
+            req->get_min_epoch(),
+            CEPH_OSD_FLAG_ONDISK);
+          reply->set_last_complete_ondisk(lcod);
+          return interruptor::make_interruptible(
+            shard_services.send_to_osd(req->from.osd,
+                                       std::move(reply),
+                                       map_epoch));
+      });
     });
+  });
 }
 
 void PG::log_operation(
