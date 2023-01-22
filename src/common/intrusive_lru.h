@@ -148,6 +148,28 @@ public:
     }
   }
 
+  // Applies the given function to the referenced
+  // elemetns of the lru set in the range [from, to].
+  // unreferenced elemets within this range will be evicted.
+  template <class F>
+  void range(const K& from,
+             const K& to,
+             F&& f) {
+    auto from_iter = lru_set.lower_bound(from);
+    auto to_iter = lru_set.upper_bound(to);
+    for (auto& i = from_iter; i != to_iter && i != lru_set.end(); ) {
+      if (!(*i).lru) {
+        unreferenced_list.erase(lru_list_t::s_iterator_to(*i));
+        i = lru_set.erase_and_dispose(
+          i, [](auto *p) { delete p; }
+        );
+      } else {
+        f(TRef{static_cast<T*>(&*i)});
+        i++;
+      }
+    }
+  }
+
   /**
    * Returns the TRef corresponding to k if it exists or
    * nullptr otherwise.
