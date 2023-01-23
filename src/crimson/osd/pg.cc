@@ -1063,6 +1063,45 @@ PG::interruptible_future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
     });
 }
 
+void PG::log_operation(
+  std::vector<pg_log_entry_t>&& logv,
+  const eversion_t &trim_to,
+  const eversion_t &roll_forward_to,
+  const eversion_t &min_last_complete_ondisk,
+  bool transaction_applied,
+  ObjectStore::Transaction &txn,
+  bool async) {
+  logger().debug("{}", __func__);
+  if (is_primary()) {
+    ceph_assert(trim_to <= peering_state.get_last_update_ondisk());
+  }
+  /* TODO: when we add snap mapper and projected log support,
+   * we'll likely want to update them here.
+   *
+   * See src/osd/PrimaryLogPG.h:log_operation for how classic
+   * handles these cases.
+   */
+#if 0
+  if (transaction_applied) {
+    //TODO:
+    //update_snap_map(logv, t);
+  }
+  auto last = logv.rbegin();
+  if (is_primary() && last != logv.rend()) {
+    projected_log.skip_can_rollback_to_to_head();
+    projected_log.trim(cct, last->version, nullptr, nullptr, nullptr);
+  }
+#endif
+  peering_state.append_log(std::move(logv),
+                           trim_to,
+                           roll_forward_to,
+                           min_last_complete_ondisk,
+                           txn,
+                           !txn.empty(),
+                           false);
+  }
+
+
 PG::load_obc_iertr::future<>
 PG::replica_reload_repop_obc(
   const std::vector<pg_log_entry_t> &logv) {
