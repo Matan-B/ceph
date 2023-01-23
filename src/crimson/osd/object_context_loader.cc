@@ -152,7 +152,6 @@ using crimson::common::local_conf;
   ObjectContextLoader::load_obc_iertr::future<>
   ObjectContextLoader::reload_obc(ObjectContext& obc) const
   {
-    assert(obc.is_head());
     return backend->load_metadata(obc.get_oid())
     .safe_then_interruptible<false>(
       [&obc](auto md)-> load_obc_ertr::future<> {
@@ -161,14 +160,18 @@ using crimson::common::local_conf;
         __func__,
         md->os.oi,
         obc.get_oid());
-      if (!md->ssc) {
-        logger().error(
-          "{}: oid {} missing snapsetcontext",
-          __func__,
-          obc.get_oid());
-        return crimson::ct_error::object_corrupted::make();
+      if (obc.get_oid().is_head()) {
+        if (!md->ssc) {
+          logger().error(
+            "{}: oid {} missing snapsetcontext",
+            __func__,
+            obc.get_oid());
+          return crimson::ct_error::object_corrupted::make();
+        }
+        obc.set_head_state(std::move(md->os), std::move(md->ssc));
+      } else {
+        obc.set_clone_state(std::move(md->os));
       }
-      obc.set_head_state(std::move(md->os), std::move(md->ssc));
       return load_obc_ertr::now();
     });
   }
