@@ -7943,7 +7943,7 @@ int OSDMonitor::check_pg_num(int64_t pool,
 
   for (const auto& [pool_id, pool_info] : osdmap.get_pools()) {
     // Check only for pools affected by crush rule
-    if (crush_pool_ids.contains(pool_id)) {
+    if (crush_pool_ids.count(pool_id)) {
       if (pool_id == pool) {
         // Specified pool, use given pg_num and size values.
         projected += pg_num * size;
