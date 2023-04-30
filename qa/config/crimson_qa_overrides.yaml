@@ -1,4 +1,9 @@
 overrides:
+  tasks:
+  - install:
+      exclude_packages:
+        - cephfs-java
+  - print: "**** cephfs-java is excluded"
   ceph:
     conf:
       global:
