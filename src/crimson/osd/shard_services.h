@@ -439,6 +439,7 @@ public:
   seastar::future<cached_map_t> get_map(epoch_t e) final {
     return with_singleton(
       [](auto &sstate, epoch_t e) {
+      // bug stage 1
 	return sstate.get_local_map(
 	  e
 	).then([](auto lmap) {

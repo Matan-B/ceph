@@ -73,8 +73,11 @@ seastar::future<> PGAdvanceMap::start()
     return fut.then([this] {
       return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
-	boost::make_counting_iterator(to + 1),
+	boost::make_counting_iterator(to + 1), // why
 	[this](epoch_t next_epoch) {
+	  logger().debug("{}: start: getting map {}",
+	                 *this, next_epoch);
+    // bug stage 0
 	  return shard_services.get_map(next_epoch).then(
 	    [this] (cached_map_t&& next_map) {
 	      logger().debug("{}: advancing map to {}",
