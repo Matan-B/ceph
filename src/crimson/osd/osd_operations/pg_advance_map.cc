@@ -62,7 +62,12 @@ seastar::future<> PGAdvanceMap::start()
   return enter_stage<>(
     pg->peering_request_pg_pipeline.process
   ).then([this] {
+    logger().debug("{}: initializing from: {}",
+                   *this, pg->get_osdmap_epoch());
     from = pg->get_osdmap_epoch();
+    assert(std::cmp_less_equal(*from, to));
+    //instead of asserting is it safe to say that this pg_advance is no longer relevant?
+    // this pg was already advanced to to from which is later! Just No-op!
     auto fut = seastar::now();
     if (do_init) {
       fut = pg->handle_initialize(rctx
@@ -71,6 +76,7 @@ seastar::future<> PGAdvanceMap::start()
       });
     }
     return fut.then([this] {
+      //move from here
       return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
 	boost::make_counting_iterator(to + 1), // why

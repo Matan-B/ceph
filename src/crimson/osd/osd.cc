@@ -861,6 +861,7 @@ seastar::future<> OSD::handle_osd_map(crimson::net::ConnectionRef conn,
 
   const auto first = m->get_first();
   const auto last = m->get_last();
+  // this?
   logger().info("handle_osd_map epochs [{}..{}], i have {}, src has [{}..{}]",
                 first, last, superblock.newest_map,
                 m->cluster_osdmap_trim_lower_bound, m->newest_map);
@@ -949,10 +950,11 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
       }
     });
   }).then([m, this] {
+    auto epoch = osdmap->get_epoch();
     if (osdmap->is_up(whoami)) {
       const auto up_from = osdmap->get_up_from(whoami);
       logger().info("osd.{}: map e {} marked me up: up_from {}, bind_epoch {}, state {}",
-                    whoami, osdmap->get_epoch(), up_from, bind_epoch,
+                    whoami, epoch, up_from, bind_epoch,
 		    pg_shard_manager.get_osd_state_string());
       if (bind_epoch < up_from &&
           osdmap->get_addrs(whoami) == public_msgr->get_myaddrs() &&
@@ -971,8 +973,14 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     }
-    return check_osdmap_features().then([this] {
+    return check_osdmap_features().then([this, _epoch=epoch] {
       // yay!
+      logger().info("GOING TO SHARE {} while {}", _epoch , osdmap->get_epoch());
+
+      logger().info("TEST THIS from {} to {}", pg_shard_manager.get_shard_services().get_map()->get_epoch() , osdmap->get_epoch());
+      //  from = pg->get_osdmap_epoch();
+      // broatcast to and from??????
+      // classic just advances from m first to m last
       return pg_shard_manager.broadcast_map_to_pgs(osdmap->get_epoch());
     });
   }).then([m, this] {
