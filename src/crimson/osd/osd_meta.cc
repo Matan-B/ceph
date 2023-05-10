@@ -10,12 +10,6 @@
 #include "crimson/os/futurized_store.h"
 #include "os/Transaction.h"
 
-namespace {
-  seastar::logger& logger() {
-    return crimson::get_logger(ceph_subsys_osd);
-  }
-}
-
 using std::string;
 using read_errorator = crimson::os::FuturizedStore::Shard::read_errorator;
 
@@ -36,10 +30,7 @@ seastar::future<bufferlist> OSDMeta::load_map(epoch_t e)
                     osdmap_oid(e), 0, 0,
                     CEPH_OSD_OP_FLAG_FADVISE_WILLNEED).handle_error(
     read_errorator::all_same_way([e] {
-      logger().debug("OSDMeta::load_map: start read gave enoent on {}", e);
-      ceph_abort();
-      throw std::runtime_error(fmt::format("read gave enoent on {}",
-                                           osdmap_oid(e)));
+      ceph_abort("OSDMeta::load_map: start read gave enoent on {}", e);
     }));
 }
 

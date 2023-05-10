@@ -352,9 +352,7 @@ OSDSingletonState::get_local_map(epoch_t e)
     logger().debug("{} osdmap.{} found in cache", __func__, e);
     return seastar::make_ready_future<local_cached_map_t>(std::move(found));
   } else {
-    // bug stage 2
     logger().debug("{} loading osdmap.{} from disk", __func__, e);
-    // load e - 1?
     return load_map(e).then([e, this](std::unique_ptr<OSDMap> osdmap) {
       return seastar::make_ready_future<local_cached_map_t>(
 	osdmaps.insert(e, std::move(osdmap)));
@@ -726,8 +724,7 @@ seastar::future<> OSDSingletonState::send_incremental_map(
       return conn.send(std::move(m));
     });
   } else {
-    logger().info("{}: I SUSPECT THE BUG IS HERE", __func__);
-    return load_map_bl(osdmap->get_epoch() // - 1
+    return load_map_bl(osdmap->get_epoch()
     ).then([this, &conn](auto&& bl) mutable {
       auto m = crimson::make_message<MOSDMap>(
 	monc.get_fsid(),

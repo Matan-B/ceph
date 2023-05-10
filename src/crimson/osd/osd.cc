@@ -861,7 +861,6 @@ seastar::future<> OSD::handle_osd_map(crimson::net::ConnectionRef conn,
 
   const auto first = m->get_first();
   const auto last = m->get_last();
-  // this?
   logger().info("handle_osd_map epochs [{}..{}], i have {}, src has [{}..{}]",
                 first, last, superblock.newest_map,
                 m->cluster_osdmap_trim_lower_bound, m->newest_map);
@@ -949,12 +948,11 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     });
-  }).then([m, this] {
-    auto epoch = osdmap->get_epoch();
+  }).then([this, m, &last] {
     if (osdmap->is_up(whoami)) {
       const auto up_from = osdmap->get_up_from(whoami);
       logger().info("osd.{}: map e {} marked me up: up_from {}, bind_epoch {}, state {}",
-                    whoami, epoch, up_from, bind_epoch,
+                    whoami, osdmap->get_epoch(), up_from, bind_epoch,
 		    pg_shard_manager.get_osd_state_string());
       if (bind_epoch < up_from &&
           osdmap->get_addrs(whoami) == public_msgr->get_myaddrs() &&
@@ -973,14 +971,22 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     }
-    return check_osdmap_features().then([this, _epoch=epoch] {
+    return check_osdmap_features().then([this, &last] {
       // yay!
-      logger().info("GOING TO SHARE {} while {}", _epoch , osdmap->get_epoch());
+      // Option 2:
+      // Broadcast last instead of osdmap->get_epoch().
 
-      logger().info("TEST THIS from {} to {}", pg_shard_manager.get_shard_services().get_map()->get_epoch() , osdmap->get_epoch());
-      //  from = pg->get_osdmap_epoch();
-      // broatcast to and from??????
-      // classic just advances from m first to m last
+      // ~Option 3~:
+      // Update 'to' in critical secrtion (Same as we do with 'from').
+
+      // ~Option 4~:
+      // Share 'from' as well.
+      logger().info("osd.{}: committed_osd_maps: broadcasting osdmap.{}"
+                    "to pgs while last is {}", whoami, osdmap->get_epoch(), last);
+      // schedules a PGAdvanceMap operation in the following range:
+      // 'from':  initialized inside critical section
+      // 'to':    osdmap->get_epoch()
+      // https://tracker.ceph.com/issues/57542
       return pg_shard_manager.broadcast_map_to_pgs(osdmap->get_epoch());
     });
   }).then([m, this] {

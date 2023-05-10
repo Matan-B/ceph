@@ -24,7 +24,10 @@ PGAdvanceMap::PGAdvanceMap(
   ShardServices &shard_services, Ref<PG> pg, epoch_t to,
   PeeringCtx &&rctx, bool do_init)
   : shard_services(shard_services), pg(pg), to(to),
-    rctx(std::move(rctx)), do_init(do_init) {}
+    rctx(std::move(rctx)), do_init(do_init)
+  {
+    logger().debug("{}: created", *this);
+  }
 
 PGAdvanceMap::~PGAdvanceMap() {}
 
@@ -66,8 +69,15 @@ seastar::future<> PGAdvanceMap::start()
                    *this, pg->get_osdmap_epoch());
     from = pg->get_osdmap_epoch();
     assert(std::cmp_less_equal(*from, to));
-    //instead of asserting is it safe to say that this pg_advance is no longer relevant?
-    // this pg was already advanced to to from which is later! Just No-op!
+    // Option 1:
+    // Is it safe to say that this pg_advance is no longer relevant?
+    // this pg was already advanced to to from which is later.
+    // simply no-op.
+    /*
+    if (std::cmp_greater_equal(*from, to)) {
+      return seastar::now();
+    }
+    */
     auto fut = seastar::now();
     if (do_init) {
       fut = pg->handle_initialize(rctx
@@ -76,14 +86,15 @@ seastar::future<> PGAdvanceMap::start()
       });
     }
     return fut.then([this] {
-      //move from here
       return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
-	boost::make_counting_iterator(to + 1), // why
+	boost::make_counting_iterator(to + 1),
 	[this](epoch_t next_epoch) {
 	  logger().debug("{}: start: getting map {}",
 	                 *this, next_epoch);
-    // bug stage 0
+    // (remove me) The bug is originated here:
+    // The iteration begins from an unexisting map epoch.
+    // 'from' is later than 'to' and we try to get_map 'from' + 1.
 	  return shard_services.get_map(next_epoch).then(
 	    [this] (cached_map_t&& next_map) {
 	      logger().debug("{}: advancing map to {}",
