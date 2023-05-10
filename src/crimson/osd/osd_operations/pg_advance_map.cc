@@ -68,16 +68,16 @@ seastar::future<> PGAdvanceMap::start()
     logger().debug("{}: initializing from: {}",
                    *this, pg->get_osdmap_epoch());
     from = pg->get_osdmap_epoch();
-    assert(std::cmp_less_equal(*from, to));
-    // Option 1:
+    // assert(std::cmp_less_equal(*from, to));
+    // WIP:
     // Is it safe to say that this pg_advance is no longer relevant?
     // this pg was already advanced to to from which is later.
     // simply no-op.
-    /*
     if (std::cmp_greater_equal(*from, to)) {
+      logger().debug("{}: 'from' is later than 'to' epoch,"
+                     "nowhere to advance - skipping", *this);
       return seastar::now();
     }
-    */
     auto fut = seastar::now();
     if (do_init) {
       fut = pg->handle_initialize(rctx
@@ -86,15 +86,17 @@ seastar::future<> PGAdvanceMap::start()
       });
     }
     return fut.then([this] {
-      return seastar::do_for_each(
+	// (remove me) The bug is originated here:
+	// The iteration begins from an unexisting map epoch.
+	// 'from' is later than 'to' and we try to get_map 'from' + 1.
+	// This shoudln't be possible now - assert.
+	assert(std::cmp_less_equal(*from, to));
+	return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
 	boost::make_counting_iterator(to + 1),
 	[this](epoch_t next_epoch) {
 	  logger().debug("{}: start: getting map {}",
 	                 *this, next_epoch);
-    // (remove me) The bug is originated here:
-    // The iteration begins from an unexisting map epoch.
-    // 'from' is later than 'to' and we try to get_map 'from' + 1.
 	  return shard_services.get_map(next_epoch).then(
 	    [this] (cached_map_t&& next_map) {
 	      logger().debug("{}: advancing map to {}",
