@@ -948,7 +948,7 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     });
-  }).then([this, m, &last] {
+  }).then([m, this] {
     if (osdmap->is_up(whoami)) {
       const auto up_from = osdmap->get_up_from(whoami);
       logger().info("osd.{}: map e {} marked me up: up_from {}, bind_epoch {}, state {}",
@@ -971,18 +971,10 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     }
-    return check_osdmap_features().then([this, &last] {
+    return check_osdmap_features().then([this] {
       // yay!
-      // Option 2:
-      // Broadcast last instead of osdmap->get_epoch().
-
-      // ~Option 3~:
-      // Update 'to' in critical secrtion (Same as we do with 'from').
-
-      // ~Option 4~:
-      // Share 'from' as well.
       logger().info("osd.{}: committed_osd_maps: broadcasting osdmap.{}"
-                    "to pgs while last is {}", whoami, osdmap->get_epoch(), last);
+                    "to pgs", whoami, osdmap->get_epoch());
       // schedules a PGAdvanceMap operation in the following range:
       // 'from':  initialized inside critical section
       // 'to':    osdmap->get_epoch()
