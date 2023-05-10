@@ -91,7 +91,7 @@ seastar::future<> PGAdvanceMap::start()
 	// 'from' is later than 'to' and we try to get_map 'from' + 1.
 	// This shoudln't be possible now - assert.
 	assert(std::cmp_less_equal(*from, to));
-	return seastar::do_for_each(
+      return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
 	boost::make_counting_iterator(to + 1),
 	[this](epoch_t next_epoch) {
