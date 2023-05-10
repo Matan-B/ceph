@@ -68,16 +68,6 @@ seastar::future<> PGAdvanceMap::start()
     logger().debug("{}: initializing from: {}",
                    *this, pg->get_osdmap_epoch());
     from = pg->get_osdmap_epoch();
-    // assert(std::cmp_less_equal(*from, to));
-    // WIP:
-    // Is it safe to say that this pg_advance is no longer relevant?
-    // this pg was already advanced to to from which is later.
-    // simply no-op.
-    if (std::cmp_greater_equal(*from, to)) {
-      logger().debug("{}: 'from' is later than 'to' epoch,"
-                     "nowhere to advance - skipping", *this);
-      return seastar::now();
-    }
     auto fut = seastar::now();
     if (do_init) {
       fut = pg->handle_initialize(rctx
@@ -90,7 +80,11 @@ seastar::future<> PGAdvanceMap::start()
 	// The iteration begins from an unexisting map epoch.
 	// 'from' is later than 'to' and we try to get_map 'from' + 1.
 	// This shoudln't be possible now - assert.
-	assert(std::cmp_less_equal(*from, to));
+  if (std::cmp_greater(*from, to)) {
+    logger().debug("{}: 'from' is later than 'to' epoch,"
+                   "nowhere to advance - skipping", *this);
+    return seastar::now();
+  }
       return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
 	boost::make_counting_iterator(to + 1),

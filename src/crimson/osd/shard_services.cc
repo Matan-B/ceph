@@ -431,7 +431,7 @@ seastar::future<> OSDSingletonState::store_maps(ceph::os::Transaction& t,
 	return seastar::now();
       } else if (auto p = m->incremental_maps.find(e);
 		 p != m->incremental_maps.end()) {
-	ceph_assert (std::cmp_greater(e, 0));
+	ceph_assert (std::cmp_greater(e, 0u));
 	logger().info("store_maps found osdmap.{} incremental map, "
 	              "loading osdmap.{}", e, e - 1);
 	return load_map(e - 1).then([e, bl=p->second, &t, this](auto o) {
