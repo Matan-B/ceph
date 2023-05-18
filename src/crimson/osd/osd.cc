@@ -915,11 +915,12 @@ seastar::future<> OSD::handle_osd_map(crimson::net::ConnectionRef conn,
     });
   }).then([=, this] {
     // TODO: write to superblock and commit the transaction
-    return committed_osd_maps(start, last, m);
+    return committed_osd_maps(conn, start, last, m);
   });
 }
 
-seastar::future<> OSD::committed_osd_maps(version_t first,
+seastar::future<> OSD::committed_osd_maps(crimson::net::ConnectionRef conn,
+                                          version_t first,
                                           version_t last,
                                           Ref<MOSDMap> m)
 {
@@ -948,7 +949,7 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     });
-  }).then([m, this] {
+  }).then([conn, m, this] {
     if (osdmap->is_up(whoami)) {
       const auto up_from = osdmap->get_up_from(whoami);
       logger().info("osd.{}: map e {} marked me up: up_from {}, bind_epoch {}, state {}",
@@ -971,7 +972,7 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
 	return seastar::now();
       }
     }
-    return check_osdmap_features().then([this] {
+    return check_osdmap_features().then([this, conn] {
       // yay!
       logger().info("osd.{}: committed_osd_maps: broadcasting osdmap.{}"
                     "to pgs", whoami, osdmap->get_epoch());
@@ -979,7 +980,7 @@ seastar::future<> OSD::committed_osd_maps(version_t first,
       // 'from':  initialized inside critical section
       // 'to':    osdmap->get_epoch()
       // https://tracker.ceph.com/issues/57542
-      return pg_shard_manager.broadcast_map_to_pgs(osdmap->get_epoch());
+      return pg_shard_manager.broadcast_map_to_pgs(conn, osdmap->get_epoch());
     });
   }).then([m, this] {
     if (pg_shard_manager.is_active()) {
@@ -1113,6 +1114,7 @@ seastar::future<> OSD::handle_scrub(crimson::net::ConnectionRef conn,
     logger().warn("fsid mismatched");
     return seastar::now();
   }
+  //similar idea!
   return seastar::parallel_for_each(std::move(m->scrub_pgs),
     [m, conn, this](spg_t pgid) {
     pg_shard_t from_shard{static_cast<int>(m->get_source().num()),

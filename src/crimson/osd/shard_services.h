@@ -106,14 +106,12 @@ class PerShardState {
   }
 
   // PGMap state
-  PGMap pg_map;
+public:
+  PGMap pg_map; // todo get_pg_map
+private:
 
   seastar::future<> stop_pgs();
   std::map<pg_t, pg_stat_t> get_pg_stats() const;
-  seastar::future<> broadcast_map_to_pgs(
-    ShardServices &shard_services,
-    epoch_t epoch);
-
   Ref<PG> get_pg(spg_t pgid);
   template <typename F>
   void for_each_pg(F &&f) const {

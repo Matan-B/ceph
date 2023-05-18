@@ -9,6 +9,7 @@
 
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/pg_map.h"
+#include "crimson/net/Connection.h"
 
 namespace crimson::os {
   class FuturizedStore;
@@ -321,7 +322,7 @@ public:
     return get_osd_singleton_state().pg_to_shard_mapping.get_num_pgs();
   }
 
-  seastar::future<> broadcast_map_to_pgs(epoch_t epoch);
+  seastar::future<> broadcast_map_to_pgs(crimson::net::ConnectionRef conn, epoch_t epoch);
 
   template <typename F>
   auto with_pg(spg_t pgid, F &&f) {
@@ -337,9 +338,20 @@ public:
   }
 
   template <typename T, typename... Args>
+  auto start_pg_operation_with_state(PerShardState& _state, Args&&... args) {
+    ceph_assert(seastar::this_shard_id() == PRIMARY_CORE);
+    return _start_pg_operation<T>(_state, std::forward<Args>(args)...);
+  }
+
+  template <typename T, typename... Args>
   auto start_pg_operation(Args&&... args) {
     ceph_assert(seastar::this_shard_id() == PRIMARY_CORE);
-    auto op = get_local_state().registry.create_operation<T>(
+    return _start_pg_operation<T>(get_local_state(), std::forward<Args>(args)...);
+  }
+
+  template <typename T, typename... Args>
+  auto _start_pg_operation(PerShardState& state, Args&&... args) {
+    auto op = state.registry.create_operation<T>(
       std::forward<Args>(args)...);
     auto &logger = crimson::get_logger(ceph_subsys_osd);
     logger.debug("{}: starting {}", *op, __func__);
