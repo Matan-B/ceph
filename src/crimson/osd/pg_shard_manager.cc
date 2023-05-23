@@ -110,20 +110,21 @@ PGShardManager::get_pg_stats() const
     });
 }
 
-seastar::future<> PGShardManager::broadcast_map_to_pgs(crimson::net::ConnectionRef conn, epoch_t advance_to)
+seastar::future<> PGShardManager::broadcast_map_to_pgs(crimson::net::ConnectionRef conn, epoch_t advance_from, epoch_t advance_to)
 {
   ceph_assert(seastar::this_shard_id() == PRIMARY_CORE);
-  return shard_services.invoke_on_all([this, conn, advance_to](auto &local_service) {
+  return shard_services.invoke_on_all([this, conn, advance_from, advance_to](auto &local_service) {
     auto &state = local_service.local_state;
     auto &pgs = state.pg_map.get_pgs();
     return seastar::parallel_for_each(
       pgs.begin(), pgs.end(),
-      [this, conn, advance_to, &state](auto& pg) {
+      [this, conn, advance_from, advance_to, &state](auto& pg) {
         return start_pg_operation_with_state<PGAdvanceMap>(
           state,
           conn,
           shard_services.local(),
-          pg.second, advance_to,
+          //pg.second, advance_from, advance_to,
+          pg.second, pg.second->get_osdmap_epoch(), advance_to,
           PeeringCtx{}, false).second;
       });
   }).then([this, advance_to] {

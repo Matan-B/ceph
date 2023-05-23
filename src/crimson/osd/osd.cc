@@ -949,7 +949,7 @@ seastar::future<> OSD::committed_osd_maps(crimson::net::ConnectionRef conn,
 	return seastar::now();
       }
     });
-  }).then([conn, m, this] {
+  }).then([conn, m, this, first, last] {
     if (osdmap->is_up(whoami)) {
       const auto up_from = osdmap->get_up_from(whoami);
       logger().info("osd.{}: map e {} marked me up: up_from {}, bind_epoch {}, state {}",
@@ -972,15 +972,15 @@ seastar::future<> OSD::committed_osd_maps(crimson::net::ConnectionRef conn,
 	return seastar::now();
       }
     }
-    return check_osdmap_features().then([this, conn] {
+    return check_osdmap_features().then([this, conn, first, last] {
       // yay!
       logger().info("osd.{}: committed_osd_maps: broadcasting osdmap.{}"
-                    "to pgs", whoami, osdmap->get_epoch());
+                    "to pgs -- first {} last {}", whoami, osdmap->get_epoch(),first, last );
       // schedules a PGAdvanceMap operation in the following range:
       // 'from':  initialized inside critical section
       // 'to':    osdmap->get_epoch()
       // https://tracker.ceph.com/issues/57542
-      return pg_shard_manager.broadcast_map_to_pgs(conn, osdmap->get_epoch());
+      return pg_shard_manager.broadcast_map_to_pgs(conn, first, last);
     });
   }).then([m, this] {
     if (pg_shard_manager.is_active()) {

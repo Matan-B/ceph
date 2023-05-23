@@ -67,6 +67,7 @@ protected:
   PipelineHandle handle;
 
   std::optional<epoch_t> from;
+  epoch_t min;
   epoch_t to;
 
   PeeringCtx rctx;
@@ -74,7 +75,7 @@ protected:
 
 public:
   PGAdvanceMap(crimson::net::ConnectionRef conn,
-    ShardServices &shard_services, Ref<PG> pg, epoch_t to,
+    ShardServices &shard_services, Ref<PG> pg, epoch_t from, epoch_t to,
     PeeringCtx &&rctx, bool do_init);
   ~PGAdvanceMap();
 
@@ -82,7 +83,7 @@ public:
   void dump_detail(ceph::Formatter *f) const final;
   seastar::future<> start();
   PipelineHandle &get_handle() { return handle; }
-  epoch_t get_epoch() const { return 0; } //we dont care, soley for oprtation
+  epoch_t get_epoch() const { return min; } //we dont care, soley for oprtation
 
   seastar::future<crimson::net::ConnectionFRef> prepare_remote_submission() {
     assert(conn);

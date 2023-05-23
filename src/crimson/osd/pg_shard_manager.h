@@ -322,7 +322,7 @@ public:
     return get_osd_singleton_state().pg_to_shard_mapping.get_num_pgs();
   }
 
-  seastar::future<> broadcast_map_to_pgs(crimson::net::ConnectionRef conn, epoch_t epoch);
+  seastar::future<> broadcast_map_to_pgs(crimson::net::ConnectionRef conn, epoch_t advance_from, epoch_t advance_to);
 
   template <typename F>
   auto with_pg(spg_t pgid, F &&f) {

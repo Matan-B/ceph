@@ -21,9 +21,9 @@ namespace {
 namespace crimson::osd {
 
 PGAdvanceMap::PGAdvanceMap(crimson::net::ConnectionRef conn,
-  ShardServices &shard_services, Ref<PG> pg, epoch_t to,
+  ShardServices &shard_services, Ref<PG> pg, epoch_t from, epoch_t to,
   PeeringCtx &&rctx, bool do_init)
-  : conn(conn), shard_services(shard_services), pg(pg), to(to),
+  : conn(conn), shard_services(shard_services), pg(pg), min(from) ,to(to),
     rctx(std::move(rctx)), do_init(do_init)
   {
     logger().debug("{}: created", *this);

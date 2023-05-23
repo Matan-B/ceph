@@ -582,7 +582,7 @@ seastar::future<Ref<PG>> ShardServices::handle_pg_create_info(
 	    rctx.transaction);
 
 	  return start_operation<PGAdvanceMap>(nullptr,
-	    *this, pg, get_map()->get_epoch(), std::move(rctx), true
+	    *this, pg, 0, get_map()->get_epoch(), std::move(rctx), true
 	  ).second.then([pg=pg] {
 	    return seastar::make_ready_future<Ref<PG>>(pg);
 	  });
