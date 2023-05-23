@@ -21,9 +21,9 @@ namespace {
 namespace crimson::osd {
 
 PGAdvanceMap::PGAdvanceMap(crimson::net::ConnectionRef conn,
-  ShardServices &shard_services, Ref<PG> pg, epoch_t from, epoch_t to,
+  ShardServices &shard_services, Ref<PG> pg, epoch_t _from, epoch_t to,
   PeeringCtx &&rctx, bool do_init)
-  : conn(conn), shard_services(shard_services), pg(pg), min(from) ,to(to),
+  : conn(conn), shard_services(shard_services), pg(pg), from(_from) ,to(to),
     rctx(std::move(rctx)), do_init(do_init)
   {
     logger().debug("{}: created", *this);
@@ -65,9 +65,6 @@ seastar::future<> PGAdvanceMap::start()
   return enter_stage<>(
     pg->peering_request_pg_pipeline.process
   ).then([this] {
-    logger().debug("{}: initializing from: {}",
-                   *this, pg->get_osdmap_epoch());
-    from = pg->get_osdmap_epoch();
     auto fut = seastar::now();
     if (do_init) {
       fut = pg->handle_initialize(rctx
@@ -76,14 +73,7 @@ seastar::future<> PGAdvanceMap::start()
       });
     }
     return fut.then([this] {
-	// (remove me) The bug is originated here:
-	// The iteration begins from an unexisting map epoch.
-	// 'from' is later than 'to' and we try to get_map 'from' + 1.
-	if (std::cmp_greater(*from, to)) {
-	  logger().debug("{}: 'from' is later than 'to' epoch,"
-	                 "nowhere to advance - skipping", *this);
-	  return seastar::now();
-	}
+      ceph_assert(std::cmp_less_equal(*from, to));
       return seastar::do_for_each(
 	boost::make_counting_iterator(*from + 1),
 	boost::make_counting_iterator(to + 1),

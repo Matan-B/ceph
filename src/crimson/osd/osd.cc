@@ -980,7 +980,7 @@ seastar::future<> OSD::committed_osd_maps(crimson::net::ConnectionRef conn,
       // 'from':  initialized inside critical section
       // 'to':    osdmap->get_epoch()
       // https://tracker.ceph.com/issues/57542
-      return pg_shard_manager.broadcast_map_to_pgs(conn, first, last);
+      return pg_shard_manager.broadcast_map_to_pgs(conn, first - 1, last);
     });
   }).then([m, this] {
     if (pg_shard_manager.is_active()) {

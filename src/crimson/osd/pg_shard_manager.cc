@@ -123,8 +123,8 @@ seastar::future<> PGShardManager::broadcast_map_to_pgs(crimson::net::ConnectionR
           state,
           conn,
           shard_services.local(),
-          //pg.second, advance_from, advance_to,
-          pg.second, pg.second->get_osdmap_epoch(), advance_to,
+          pg.second, advance_from, advance_to,
+          //pg.second, pg.second->get_osdmap_epoch(), advance_to,
           PeeringCtx{}, false).second;
       });
   }).then([this, advance_to] {

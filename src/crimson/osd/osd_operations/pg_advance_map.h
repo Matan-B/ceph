@@ -66,8 +66,9 @@ protected:
   Ref<PG> pg;
   PipelineHandle handle;
 
+  // todo: no longer optional
   std::optional<epoch_t> from;
-  epoch_t min;
+  // Advnace map won't start until pg is at epoch min
   epoch_t to;
 
   PeeringCtx rctx;
@@ -83,7 +84,7 @@ public:
   void dump_detail(ceph::Formatter *f) const final;
   seastar::future<> start();
   PipelineHandle &get_handle() { return handle; }
-  epoch_t get_epoch() const { return min; } //we dont care, soley for oprtation
+  epoch_t get_epoch() const { return *from; }
 
   seastar::future<crimson::net::ConnectionFRef> prepare_remote_submission() {
     assert(conn);
