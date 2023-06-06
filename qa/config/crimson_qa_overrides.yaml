@@ -7,7 +7,11 @@ overrides:
         osd pool default crimson: true
       osd:
         crimson seastar smp: 3
+      clients:
+        client.0:
+          debug rbd: 20
     flavor: crimson
   workunit:
+    timeout: 1h
     env:
       CRIMSON_COMPAT: '1'
