@@ -402,6 +402,8 @@ seastar::future<> OSD::start()
     );
   }).then([this](OSDSuperblock&& sb) {
     superblock = std::move(sb);
+    get_shard_services().set_osdmap_tlb(
+      superblock.cluster_osdmap_trim_lower_bound);
     get_pg_shard_manager().set_superblock(superblock);
     return get_pg_shard_manager().get_local_map(superblock.current_epoch);
   }).then([this](OSDMapService::local_cached_map_t&& map) {
@@ -1035,6 +1037,8 @@ seastar::future<> OSD::ShardDispatcher::_handle_osd_map(Ref<MOSDMap> m)
         osd.superblock.clean_thru = last;
       }
       pg_shard_manager.get_meta_coll().store_superblock(t, osd.superblock);
+      get_shard_services().set_osdmap_tlb(
+        osd.superblock.cluster_osdmap_trim_lower_bound);
       pg_shard_manager.set_superblock(osd.superblock);
       logger().debug("OSD::handle_osd_map: do_transaction...");
       return store.get_sharded_store().do_transaction(

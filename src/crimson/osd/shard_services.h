@@ -79,6 +79,16 @@ class PerShardState {
 
   seastar::future<> dump_ops_in_flight(Formatter *f) const;
 
+  epoch_t cluster_osdmap_trim_lower_bound = 0;
+
+  void set_osdmap_tlb(epoch_t epoch) {
+    cluster_osdmap_trim_lower_bound = epoch;
+  }
+
+  epoch_t get_osdmap_tlb() {
+    return cluster_osdmap_trim_lower_bound;
+  }
+
   epoch_t up_epoch = 0;
   OSDMapService::cached_map_t osdmap;
   const auto &get_osdmap() const {
@@ -492,6 +502,9 @@ public:
   FORWARD_TO_OSD_SINGLETON(send_pg_temp)
   FORWARD_TO_LOCAL_CONST(get_mnow)
   FORWARD_TO_LOCAL(get_hb_stamps)
+
+  FORWARD_TO_LOCAL(set_osdmap_tlb)
+  FORWARD_TO_LOCAL(get_osdmap_tlb)
 
   FORWARD(pg_created, pg_created, local_state.pg_map)
 
