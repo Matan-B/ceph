@@ -88,6 +88,8 @@ public:
   // return the first element that is greater than key
   std::optional<value_type> upper_bound(const K& key);
 
+  K cached_key_lower_bound();
+
   void erase(const K& key) {
     cache.erase(key);
     _erase_weak(key);
@@ -177,4 +179,10 @@ SharedLRU<K,V>::upper_bound(const K& key)
     }
   }
   return std::nullopt;
+}
+
+template<class K, class V>
+K SharedLRU<K,V>::cached_key_lower_bound()
+{
+  return weak_refs.begin()->first;
 }

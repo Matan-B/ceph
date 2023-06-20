@@ -713,30 +713,34 @@ seastar::future<> OSDSingletonState::send_incremental_map(
                 "superblock's oldest map: {}",
                 __func__, first, superblock.oldest_map);
   if (first >= superblock.oldest_map) {
+    // TODO: osd_map_share_max_epochs, osd_map_message_max/bytes
+    if (first < superblock.cluster_osdmap_trim_lower_bound) {
+      // we don't have the next map the target wants, so start with a full map.
+      logger().debug("{}: cluster osdmap lower bound {}"
+                     " > first {},  starting with full map",
+                     __func__, superblock.cluster_osdmap_trim_lower_bound,
+                     first);
+      first = superblock.cluster_osdmap_trim_lower_bound;
+    }
     return load_map_bls(
       first, superblock.newest_map
     ).then([this, &conn, first](auto&& bls) {
       auto m = crimson::make_message<MOSDMap>(
 	monc.get_fsid(),
 	osdmap->get_encoding_features());
-      m->cluster_osdmap_trim_lower_bound = first;
+      m->cluster_osdmap_trim_lower_bound = superblock.cluster_osdmap_trim_lower_bound;
       m->newest_map = superblock.newest_map;
       m->maps = std::move(bls);
       return conn.send(std::move(m));
     });
   } else {
+    // just send latest full map
     return load_map_bl(osdmap->get_epoch()
     ).then([this, &conn](auto&& bl) mutable {
       auto m = crimson::make_message<MOSDMap>(
 	monc.get_fsid(),
 	osdmap->get_encoding_features());
-      /* TODO: once we support the tracking of superblock's
-       *       cluster_osdmap_trim_lower_bound, the MOSDMap should
-       *       be populated with this value instead of the oldest_map.
-       *       See: OSD::handle_osd_map for how classic updates the
-       *       cluster's trim lower bound.
-       */
-      m->cluster_osdmap_trim_lower_bound = superblock.oldest_map;
+      m->cluster_osdmap_trim_lower_bound = superblock.cluster_osdmap_trim_lower_bound;
       m->newest_map = superblock.newest_map;
       m->maps.emplace(osdmap->get_epoch(), std::move(bl));
       return conn.send(std::move(m));

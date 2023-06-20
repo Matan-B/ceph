@@ -105,6 +105,8 @@ public:
     seastar::future<> handle_mark_me_down(crimson::net::ConnectionRef conn,
                                           Ref<MOSDMarkMeDown> m);
 
+    void trim_maps(ceph::os::Transaction& t, epoch_t oldest, int nreceived, bool skip_maps);
+
     seastar::future<> committed_osd_maps(version_t first,
                                          version_t last,
                                          Ref<MOSDMap> m);

@@ -24,6 +24,13 @@ void OSDMeta::store_map(ceph::os::Transaction& t,
   t.write(coll->get_cid(), osdmap_oid(e), 0, m.length(), m);
 }
 
+void OSDMeta::remove_map(ceph::os::Transaction& t,
+                         epoch_t e)
+{
+  t.remove(coll->get_cid(), osdmap_oid(e));
+  //t.remove(coll->get_cid(), get_inc_osdmap_pobject_name(e));
+}
+
 seastar::future<bufferlist> OSDMeta::load_map(epoch_t e)
 {
   return store.read(coll,
@@ -85,6 +92,11 @@ ghobject_t OSDMeta::osdmap_oid(epoch_t epoch)
   string name = fmt::format("osdmap.{}", epoch);
   return ghobject_t(hobject_t(sobject_t(object_t(name), 0)));
 }
+
+//ghobject_t get_inc_osdmap_pobject_name(epoch_t epoch) {
+//  string name = fmt::format("inc_osdmap.{}", epoch);
+//  return ghobject_t(hobject_t(sobject_t(object_t(name), 0)));
+//}
 
 ghobject_t OSDMeta::final_pool_info_oid(int64_t pool)
 {

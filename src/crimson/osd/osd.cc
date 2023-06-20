@@ -402,6 +402,9 @@ seastar::future<> OSD::start()
     );
   }).then([this](OSDSuperblock&& sb) {
     superblock = std::move(sb);
+    if (!superblock.cluster_osdmap_trim_lower_bound) {
+      superblock.cluster_osdmap_trim_lower_bound = superblock.oldest_map;
+    }
     get_shard_services().set_osdmap_tlb(
       superblock.cluster_osdmap_trim_lower_bound);
     get_pg_shard_manager().set_superblock(superblock);
@@ -999,6 +1002,14 @@ seastar::future<> OSD::ShardDispatcher::_handle_osd_map(Ref<MOSDMap> m)
   if (last <= osd.superblock.newest_map) {
     return seastar::now();
   }
+
+  if (osd.superblock.cluster_osdmap_trim_lower_bound < m->cluster_osdmap_trim_lower_bound) {
+    osd.superblock.cluster_osdmap_trim_lower_bound = m->cluster_osdmap_trim_lower_bound;
+    logger().debug("{} superblock cluster_osdmap_trim_lower_bound new epoch is: {}",
+                   osd.superblock.cluster_osdmap_trim_lower_bound);
+    ceph_assert(osd.superblock.cluster_osdmap_trim_lower_bound >= osd.superblock.oldest_map);
+  }
+
   // missing some?
   bool skip_maps = false;
   epoch_t start = osd.superblock.newest_map + 1;
@@ -1025,6 +1036,17 @@ seastar::future<> OSD::ShardDispatcher::_handle_osd_map(Ref<MOSDMap> m)
     return pg_shard_manager.store_maps(t, start, m).then([=, this, &t] {
       // even if this map isn't from a mon, we may have satisfied our subscription
       osd.monc->sub_got("osdmap", last);
+
+      if (osd.superblock.oldest_map) {
+        // make sure we at least keep pace with incoming maps
+        logger().debug("OSD::handle_osd_map: WOULD TRIM {} to {}",
+                       osd.superblock.oldest_map, m->cluster_osdmap_trim_lower_bound);
+        //WIP:
+        //trim_maps(m->cluster_osdmap_trim_lower_bound,
+        //          last - first + 1, skip_maps);
+        //pg_num_history.prune(superblock.oldest_map);
+      }  
+
       if (!osd.superblock.oldest_map || skip_maps) {
         osd.superblock.oldest_map = first;
       }
@@ -1046,9 +1068,52 @@ seastar::future<> OSD::ShardDispatcher::_handle_osd_map(Ref<MOSDMap> m)
 	std::move(t));
     });
   }).then([=, this] {
-    // TODO: write to superblock and commit the transaction
+    // TODO: write to superblock and commit the transaction?
     return committed_osd_maps(start, last, m);
   });
+}
+
+void OSD::ShardDispatcher::trim_maps(ceph::os::Transaction& t, epoch_t oldest, int nreceived, bool skip_maps)
+{
+  //epoch_t min = std::min(oldest, get_shard_services().osdmaps.cached_key_lower_bound());
+  epoch_t min = 0;
+  if (min <= osd.superblock.oldest_map)
+    return;
+  
+  int num_trimmed = 0;
+  for (epoch_t e = osd.superblock.oldest_map; e < min; ++e) {
+    logger().debug("removing old osdmap epoch {}", e);
+    pg_shard_manager.get_meta_coll().remove_map(t, e);
+    osd.superblock.oldest_map = e + 1;
+    num_trimmed++;
+    /*
+    if (num_trimmed >= cct->_conf->osd_target_transaction_size && num >= nreceived) {
+      service.publish_superblock(superblock);
+      write_superblock(t);
+      int tr = store->queue_transaction(service.meta_ch, std::move(t), nullptr);
+      ceph_assert(tr == 0);
+      num_trimmed = 0;
+      if (!skip_maps) {
+        // skip_maps leaves us with a range of old maps if we fail to remove all
+        // of them before moving superblock.oldest_map forward to the first map
+        // in the incoming MOSDMap msg. so we should continue removing them in
+        // this case, even we could do huge series of delete transactions all at
+        // once.
+        break;
+      }
+    }
+    */
+  }
+  if (num_trimmed > 0) {
+    //service.publish_superblock(superblock);
+    //write_superblock(t);
+    //int tr = store->queue_transaction(service.meta_ch, std::move(t), nullptr);
+    //ceph_assert(tr == 0);
+  }
+  // we should not remove the cached maps
+  //ceph_assert(min <= service.map_cache.cached_key_lower_bound());
+  //ceph_assert(min <= get_shard_services().osdmaps.cached_key_lower_bound());
+  return;
 }
 
 seastar::future<> OSD::ShardDispatcher::committed_osd_maps(
