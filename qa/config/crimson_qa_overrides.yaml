@@ -6,7 +6,7 @@ overrides:
       mon:
         osd pool default crimson: true
       osd:
-        crimson seastar smp: 3
+        crimson seastar smp: 1
     flavor: crimson
   workunit:
     env:
