@@ -11,6 +11,9 @@ overrides:
       - \(POOL_
       - \(CACHE_POOL_
       - \(POOL_FULL\)
+    conf:
+      global:
+        debug ms: 20
 tasks:
 - workunit:
     clients:
