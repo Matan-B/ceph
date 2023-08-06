@@ -209,6 +209,8 @@ void usage(const char *n, po::options_description &d)
   << "                                  (default: last committed)\n"
   << "  get mgr [-- options]            get mgr map (version VER if specified)\n"
   << "                                  (default: last committed)\n"
+  << "  get osd_snap KEY [-- options]   get osd_snap key (purged_snap_ or \n"
+  << "                                  purged_epoch_)\n"
   << "  get crushmap [-- options]       get crushmap (version VER if specified)\n"
   << "                                  (default: last committed)\n"
   << "  show-versions [-- options]      show the first&last committed version of map\n"
@@ -882,6 +884,8 @@ int main(int argc, char **argv) {
     unsigned v = 0;
     string outpath;
     string map_type;
+    string key;
+
     // visible options for this command
     po::options_description op_desc("Allowed 'get' options");
     op_desc.add_options()
@@ -897,11 +901,13 @@ int main(int argc, char **argv) {
     // when parsing.
     po::options_description hidden_op_desc("Hidden 'get' options");
     hidden_op_desc.add_options()
-      ("map-type", po::value<string>(&map_type),
-       "map-type")
+      ("map-type", po::value<string>(&map_type),"map-type")
+      ("key", po::value<string>(&key),"key")
       ;
     po::positional_options_description op_positional;
     op_positional.add("map-type", 1);
+    op_positional.add("key", 1);
+
 
     po::variables_map op_vm;
     int r = parse_cmd_args(&op_desc, &hidden_op_desc, &op_positional,
@@ -939,10 +945,13 @@ int main(int argc, char **argv) {
         ::remove(outpath.c_str());
       }
     });
-
     bufferlist bl;
     r = 0;
-    if (map_type == "osdmap") {
+    if (map_type == "osd_snap") {
+      std::cout << map_type << " " << key << std::endl;
+      // map_type is the prefix
+      r = st.get(map_type, key, bl);
+    } else if (map_type == "osdmap") {
       r = st.get(map_type, st.combine_strings("full", v), bl);
     } else if (map_type == "crushmap") {
       bufferlist tmp;
@@ -964,7 +973,24 @@ int main(int argc, char **argv) {
       stringstream ss;
       bufferlist out;
       try {
-        if (map_type == "monmap") {
+        if (map_type == "osd_snap") {
+          auto p = bl.cbegin();
+          if (key.starts_with("purged_epoch_")) {
+            map<int64_t,snap_interval_set_t> val;
+            ceph::decode(val, p);
+            std::cout << val << std::endl;
+          } else if (key.starts_with("purged_snap_")) {
+            snapid_t first_snap, end_snap;
+            epoch_t epoch;
+            ceph::decode(first_snap, p);
+            ceph::decode(end_snap, p);
+            ceph::decode(epoch, p);
+            std::cout << "first_snap:" << first_snap
+                      << " end_snap: " << end_snap
+                      << " epoch: " << epoch
+                      << std::endl;
+          }
+        } else if (map_type == "monmap") {
           MonMap monmap;
           monmap.decode(bl);
           monmap.print(ss);
