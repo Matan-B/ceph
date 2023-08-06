@@ -35,6 +35,7 @@
 #include "osd/OSDMap.h"
 #include "crush/CrushCompiler.h"
 #include "mon/CreatingPGs.h"
+#include "common/url_escape.h"
 
 namespace po = boost::program_options;
 
@@ -226,6 +227,7 @@ void usage(const char *n, po::options_description &d)
   << "                                  (rewrite-crush -- --help for more info)\n"
   << "  rebuild                         rebuild store\n"
   << "                                  (rebuild -- --help for more info)\n"
+  << "  rm PREFIX KEY                   remove specified key\n"
   << std::endl;
   std::cerr << d << std::endl;
   std::cerr
@@ -1321,6 +1323,32 @@ int main(int argc, char **argv) {
     err = rewrite_crush(argv[0], subcmds, st);
   } else if (cmd == "rebuild") {
     err = rebuild_monstore(argv[0], subcmds, st);
+  } else if (cmd == "rm") {
+    string prefix, key;
+    // No visible options for this command
+    po::options_description op_desc("Allowed 'get' options");
+    po::options_description hidden_op_desc("Hidden 'get' options");
+    hidden_op_desc.add_options()
+      ("prefix", po::value<string>(&prefix),"prefix")
+      ("key", po::value<string>(&key),"key")
+      ;
+    po::positional_options_description op_positional;
+    op_positional.add("prefix", 1);
+    op_positional.add("key", 1);
+
+    po::variables_map op_vm;
+    int r = parse_cmd_args(&op_desc, &hidden_op_desc, &op_positional,
+                           subcmds, &op_vm);
+    if (r < 0) {
+      return -r;
+    }
+    int ret = st.clear_key(prefix, key);
+    if (ret < 0) {
+      std::cerr << "error removing ("
+                << url_escape(prefix) << "," << url_escape(key) << ")"
+                << std::endl;
+      return 1;
+    }
   } else {
     std::cerr << "Unrecognized command: " << cmd << std::endl;
     usage(argv[0], desc);
