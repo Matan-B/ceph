@@ -233,7 +233,7 @@ void usage(const char *n, po::options_description &d)
     << "* Ceph-specific options should be in the format --option-name=VAL\n"
     << "  (specifically, do not forget the '='!!)\n"
     << "* Command-specific options need to be passed after a '--'\n"
-    << "  e.g., 'get monmap -- --version 10 --out /tmp/foo'"
+    << "  e.g., 'get monmap --debug -- --version 10 --out /tmp/foo'"
     << std::endl;
 }
 
@@ -755,6 +755,7 @@ int main(int argc, char **argv) {
   vector<string> subcmds;
   desc.add_options()
     ("help,h", "produce help message")
+    ("debug,d", "allow rocksdb debug messages")
     ;
 
   /* Dear Future Developer:
@@ -826,6 +827,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  string rocksdb_debug_lvl = "0";
+  if (vm.count("debug")) {
+    rocksdb_debug_lvl = "20";
+  }
+
   vector<const char *> ceph_options;
   ceph_options.reserve(ceph_option_strings.size());
   for (vector<string>::iterator i = ceph_option_strings.begin();
@@ -834,8 +840,12 @@ int main(int argc, char **argv) {
     ceph_options.push_back(i->c_str());
   }
 
+  map<string,string> defaults = {
+    { "debug_rocksdb", rocksdb_debug_lvl }
+  };
+
   auto cct = global_init(
-    NULL, ceph_options, CEPH_ENTITY_TYPE_MON,
+    &defaults, ceph_options, CEPH_ENTITY_TYPE_MON,
     CODE_ENVIRONMENT_UTILITY,
     CINIT_FLAG_NO_MON_CONFIG);
   common_init_finish(g_ceph_context);
