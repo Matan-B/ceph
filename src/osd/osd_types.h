@@ -1825,6 +1825,7 @@ public:
   bool is_removed_snap(snapid_t s) const;
 
   snapid_t snap_exists(std::string_view s) const;
+  bool snap_exists(snapid_t s) const;
   void add_snap(const char *n, utime_t stamp);
   void add_snap_speified(const char *n, utime_t stamp, uint64_t id);
 

@@ -3729,6 +3729,14 @@ public:
 		     OpContextVert<ceph::buffer::list>(c, nullptr));
   }
 
+  void delete_pool_snap_again(int64_t pool,
+			decltype(PoolOp::onfinish)&& onfinish);
+  void delete_pool_snap_again(int64_t pool,
+			Context* c) {
+    delete_pool_snap_again(pool,
+		     OpContextVert<ceph::buffer::list>(c, nullptr));
+  }
+
   void delete_selfmanaged_snap(int64_t pool, snapid_t snap,
 			       decltype(PoolOp::onfinish)&& onfinish);
   void delete_selfmanaged_snap(int64_t pool, snapid_t snap,

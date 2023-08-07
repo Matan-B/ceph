@@ -220,6 +220,12 @@ string SnapMapper::to_raw_key(
   return get_prefix(in.second.pool, in.first) + shard_prefix + in.second.to_str();
 }
 
+string SnapMapper::to_raw_key_static(
+  const pair<snapid_t, hobject_t> &in)
+{
+  return get_prefix(in.second.pool, in.first) + in.second.to_str();
+}
+
 std::string SnapMapper::to_raw_key(snapid_t snap, const hobject_t &clone) const
 {
   return get_prefix(clone.pool, snap) + shard_prefix + clone.to_str();
@@ -881,6 +887,11 @@ bool SnapMapper::is_legacy_mapping(const string &to_test)
     LEGACY_MAPPING_PREFIX;
 }
 
+bool SnapMapper::is_legacy_broken_mapping(const string &to_test)
+{
+  return is_mapping(to_test) && (to_test.back() == '_');
+}
+
 #ifndef WITH_SEASTAR
 /* Octopus modified the SnapMapper key format from
  *
@@ -912,6 +923,15 @@ std::string SnapMapper::convert_legacy_key(
     SnapMapper::LEGACY_MAPPING_PREFIX.length());
   return SnapMapper::MAPPING_PREFIX + std::to_string(old.second.pool)
     + "_" + object_suffix;
+}
+
+std::string SnapMapper::convert_legacy_broken_key(
+  const std::string& old_key,
+  const ceph::buffer::list& value)
+{
+  //from raw will still work
+  auto old = from_raw(make_pair(old_key, value));
+  return to_raw_key_static(old); //replicated only for now shard is ignored
 }
 
 int SnapMapper::convert_legacy(
@@ -971,5 +991,66 @@ int SnapMapper::convert_legacy(
     ceph_assert(r == 0);
   }
   return 0;
+}
+
+
+int SnapMapper::convert_legacy_broken(
+  CephContext *cct,
+  ObjectStore *store,
+  ObjectStore::CollectionHandle& ch,
+  ghobject_t hoid,
+  unsigned max)
+{
+  dout(10) << __func__ << "in" << dendl;
+  uint64_t n = 0;
+  std::set<std::string> old_keys;
+
+  ObjectMap::ObjectMapIterator iter = store->get_omap_iterator(ch, hoid);
+  if (!iter) {
+    return -EIO;
+  }
+
+  auto start = ceph::mono_clock::now();
+
+  iter->upper_bound(SnapMapper::MAPPING_PREFIX);
+  map<string,ceph::buffer::list> to_set;
+  while (iter->valid()) {
+    bool valid = SnapMapper::is_legacy_broken_mapping(iter->key());
+    if (valid) {
+      dout(20) << __func__ << "old key: " << iter->key() << dendl;
+      old_keys.insert(iter->key());
+      auto new_key = convert_legacy_broken_key(iter->key(), iter->value());
+      dout(20) << __func__ << "converted key: " << new_key << dendl;
+      to_set.emplace(new_key, iter->value());
+      ++n;
+      iter->next();
+    }
+    if (!valid || !iter->valid() || to_set.size() >= max) {
+      ObjectStore::Transaction t;
+      t.omap_setkeys(ch->cid, hoid, to_set);
+      int r = store->queue_transaction(ch, std::move(t));
+      ceph_assert(r == 0);
+      to_set.clear();
+      if (!valid) {
+        break;
+      }
+      dout(10) << __func__ << " converted " << n << " keys" << dendl;
+    }
+  }
+
+  auto end = ceph::mono_clock::now();
+
+  dout(1) << __func__ << " converted " << n << " keys in "
+	  << timespan_str(end - start) << dendl;
+
+  // remove the old keys
+  {
+    ObjectStore::Transaction t;
+    t.omap_rmkeys(ch->cid, hoid, old_keys);
+    int r = store->queue_transaction(ch, std::move(t));
+    ceph_assert(r == 0);
+  }
+
+  return n;
 }
 #endif // !WITH_SEASTAR

@@ -1723,6 +1723,17 @@ snapid_t pg_pool_t::snap_exists(std::string_view s) const
   return 0;
 }
 
+
+bool pg_pool_t::snap_exists(snapid_t s) const
+{
+  for (auto p = snaps.cbegin(); p != snaps.cend(); ++p) {
+    if (p->second.snapid == s) {
+        return true;
+    }
+  }
+  return false;
+}
+
 void pg_pool_t::add_snap(const char *n, utime_t stamp)
 {
   ceph_assert(!is_unmanaged_snaps_mode());

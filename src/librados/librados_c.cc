@@ -1758,6 +1758,17 @@ extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_ioctx_snap_create)(
 }
 LIBRADOS_C_API_BASE_DEFAULT(rados_ioctx_snap_create);
 
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_ioctx_snap_remove_again)(
+  rados_ioctx_t io)
+{
+  tracepoint(librados, rados_ioctx_snap_remove_enter, io, 0);
+  librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+  int retval = ctx->snap_remove_again();
+  tracepoint(librados, rados_ioctx_snap_remove_exit, retval);
+  return retval;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_ioctx_snap_remove_again);
+
 extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_ioctx_snap_remove)(
   rados_ioctx_t io,
   const char *snapname)

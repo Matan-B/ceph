@@ -106,6 +106,7 @@ struct librados::IoCtxImpl {
   int selfmanaged_snap_create(uint64_t *snapid);
   void aio_selfmanaged_snap_create(uint64_t *snapid, AioCompletionImpl *c);
   int snap_remove(const char* snapname);
+  int snap_remove_again();
   int rollback(const object_t& oid, const char *snapName);
   int selfmanaged_snap_remove(uint64_t snapid);
   void aio_selfmanaged_snap_remove(uint64_t snapid, AioCompletionImpl *c);

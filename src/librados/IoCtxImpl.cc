@@ -422,6 +422,20 @@ int librados::IoCtxImpl::snap_remove(const char *snapName)
   return reply;
 }
 
+int librados::IoCtxImpl::snap_remove_again()
+{
+  int reply;
+
+  ceph::mutex mylock = ceph::make_mutex("IoCtxImpl::snap_remove_again::mylock");
+  ceph::condition_variable cond;
+  bool done;
+  Context *onfinish = new C_SafeCond(mylock, cond, &done, &reply);
+  objecter->delete_pool_snap_again(poolid, onfinish);
+  unique_lock l{mylock};
+  cond.wait(l, [&done] { return done; });
+  return reply;
+}
+
 int librados::IoCtxImpl::selfmanaged_snap_rollback_object(const object_t& oid,
 							  ::SnapContext& snapc,
 							  uint64_t snapid)

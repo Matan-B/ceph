@@ -3243,6 +3243,21 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
     cout << "removed pool " << pool_name << " snap " << nargs[1] << std::endl;
   }
 
+  else if (strcmp(nargs[0], "rmsnap_again") == 0) {
+    if (!pool_name || nargs.size() < 1) {
+      usage(cerr);
+      return 1;
+    }
+
+    ret = io_ctx.snap_remove_again();
+    if (ret < 0) {
+      cerr << "error removing pool " << pool_name
+	   << ": " << cpp_strerror(ret) << std::endl;
+      return 1;
+    }
+    cout << "removed non-existing snaps in pool " << pool_name << std::endl;
+  }
+
   else if (strcmp(nargs[0], "rollback") == 0) {
     if (!pool_name || nargs.size() < 3) {
       usage(cerr);

@@ -938,6 +938,9 @@ inline namespace v14_2_0 {
     // Remove a snapshot from this pool
     int snap_remove(const char *snapname);
 
+    // Remove a snapshot from this pool AGAIN
+    int snap_remove_again();
+
     int snap_list(std::vector<snap_t> *snaps);
 
     int snap_rollback(const std::string& oid, const char *snapname);

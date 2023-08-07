@@ -14070,6 +14070,12 @@ bool OSDMonitor::preprocess_pool_op(MonOpRequestRef op)
       return true;
     }
     return false;
+  case POOL_OP_DELETE_SNAP_AGAIN:
+    if (p->is_unmanaged_snaps_mode()) {
+      _pool_op_reply(op, -EINVAL, osdmap.get_epoch());
+      return true;
+    }
+    return false;
   case POOL_OP_DELETE_UNMANAGED_SNAP:
     if (p->is_pool_snaps_mode()) {
       _pool_op_reply(op, -EINVAL, osdmap.get_epoch());
@@ -14203,6 +14209,15 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
       _pool_op_reply(op, ret, osdmap.get_epoch());
       return false;
 
+    case POOL_OP_DELETE_SNAP_AGAIN:
+      if (!pool->is_unmanaged_snaps_mode()) {
+        break;
+      } else {
+        ret = -EINVAL;
+      }
+      _pool_op_reply(op, ret, osdmap.get_epoch());
+      return false;
+
     case POOL_OP_DELETE_UNMANAGED_SNAP:
       // we won't allow removal of an unmanaged snapshot from a pool
       // not in unmanaged snaps mode.
@@ -14233,6 +14248,13 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
   switch (m->op) {
   case POOL_OP_CREATE_SNAP:
   case POOL_OP_DELETE_SNAP:
+    if (pp.is_unmanaged_snaps_mode()) {
+      ret = -EINVAL;
+      goto out;
+    }
+    break;
+
+  case POOL_OP_DELETE_SNAP_AGAIN:
     if (pp.is_unmanaged_snaps_mode()) {
       ret = -EINVAL;
       goto out;
@@ -14272,6 +14294,27 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
 	pending_inc.new_removed_snaps[m->pool].insert(s);
 	changed = true;
       }
+    }
+    break;
+
+
+  case POOL_OP_DELETE_SNAP_AGAIN:
+    {
+        // optimally we could re-use get_purged_snaps. However, the purged snaps are pruned.
+        // Itereate thorugh speified range?
+        // Iterate up to last snapid?
+        // selfmanaged snaps
+        // for (auto& i : removed_snaps) -- removed_snaps is cleared
+        for (uint64_t i = 1; i < pp.get_snap_seq() ; i++) {
+          // exclude existing snapshots
+          if (!pp.snap_exists(i)) {
+            dout(10) << "removing snap " << i << " again. pool " << m->pool << dendl;
+	        pending_inc.new_removed_snaps[m->pool].insert(i);
+            continue;
+          }
+          dout(10) << "snap " << i << " still exists in pool " << m->pool << dendl;
+        }
+        changed = true;
     }
     break;
 

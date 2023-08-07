@@ -201,7 +201,18 @@ public:
     const std::string& old_key,
     const bufferlist& value);
 
+  static std::string convert_legacy_broken_key(
+    const std::string& old_key,
+    const bufferlist& value);
+
   static int convert_legacy(
+    CephContext *cct,
+    ObjectStore *store,
+    ObjectStore::CollectionHandle& ch,
+    ghobject_t hoid,
+    unsigned max);
+
+  static int convert_legacy_broken(
     CephContext *cct,
     ObjectStore *store,
     ObjectStore::CollectionHandle& ch,
@@ -234,10 +245,14 @@ private:
   std::string to_legacy_raw_key(
     const std::pair<snapid_t, hobject_t> &to_map);
   static bool is_legacy_mapping(const std::string &to_test);
+  static bool is_legacy_broken_mapping(const std::string &to_test);
 
   static std::string get_prefix(int64_t pool, snapid_t snap);
   std::string to_raw_key(
     const std::pair<snapid_t, hobject_t> &to_map) const;
+
+  static std::string to_raw_key_static(
+    const std::pair<snapid_t, hobject_t> &to_map);
 
   std::string to_raw_key(snapid_t snap, const hobject_t& clone) const;
 

@@ -3973,6 +3973,29 @@ void Objecter::delete_pool_snap(
   pool_op_submit(op);
 }
 
+void Objecter::delete_pool_snap_again(
+  int64_t pool,
+  decltype(PoolOp::onfinish)&& onfinish)
+{
+  unique_lock wl(rwlock);
+  ldout(cct, 10) << "delete_pool_snap; pool: " << pool << dendl;
+
+  const pg_pool_t *p = osdmap->get_pg_pool(pool);
+  if (!p) {
+    onfinish->defer(std::move(onfinish), osdc_errc::pool_dne, cb::list{});
+    return;
+  }
+
+  auto op = new PoolOp;
+  op->tid = ++last_tid;
+  op->pool = pool;
+  op->onfinish = std::move(onfinish);
+  op->pool_op = POOL_OP_DELETE_SNAP_AGAIN;
+  pool_ops[op->tid] = op;
+
+  pool_op_submit(op);
+}
+
 void Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
 				       decltype(PoolOp::onfinish)&& onfinish)
 {

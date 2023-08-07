@@ -1704,6 +1704,11 @@ int librados::IoCtx::snap_remove(const char *snapname)
   return io_ctx_impl->snap_remove(snapname);
 }
 
+int librados::IoCtx::snap_remove_again()
+{
+  return io_ctx_impl->snap_remove_again();
+}
+
 int librados::IoCtx::snap_list(std::vector<snap_t> *snaps)
 {
   return io_ctx_impl->snap_list(snaps);

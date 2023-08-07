@@ -373,6 +373,7 @@ const char *ceph_pool_op_name(int op)
 	case POOL_OP_AUID_CHANGE: return "auid change";  // (obsolete)
 	case POOL_OP_CREATE_SNAP: return "create snap";
 	case POOL_OP_DELETE_SNAP: return "delete snap";
+	case POOL_OP_DELETE_SNAP_AGAIN: return "delete snap again";
 	case POOL_OP_CREATE_UNMANAGED_SNAP: return "create unmanaged snap";
 	case POOL_OP_DELETE_UNMANAGED_SNAP: return "delete unmanaged snap";
 	}
