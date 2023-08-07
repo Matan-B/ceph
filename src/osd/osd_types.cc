@@ -1734,6 +1734,15 @@ void pg_pool_t::add_snap(const char *n, utime_t stamp)
   snaps[s].stamp = stamp;
 }
 
+void pg_pool_t::add_snap_speified(const char *n, utime_t stamp, uint64_t id)
+{
+  ceph_assert(!is_unmanaged_snaps_mode());
+  flags |= FLAG_POOL_SNAPS;
+  snaps[id].snapid = id;
+  snaps[id].name = n;
+  snaps[id].stamp = stamp;
+}
+
 uint64_t pg_pool_t::add_unmanaged_snap(bool preoctopus_compat)
 {
   ceph_assert(!is_pool_snaps_mode());

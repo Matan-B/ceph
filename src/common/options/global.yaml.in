@@ -3004,6 +3004,26 @@ options:
   - osd_min_pg_log_entries
   - osd_max_pg_log_entries
   with_legacy: true
+- name: allow_speified_snapshot_creation
+  type: bool
+  level: dev
+  desc: DO NOT USE WIP
+  default: false
+  services:
+  - osd
+  - mon
+  see_also:
+  - allow_speified_snapshot_creation_id
+- name: allow_speified_snapshot_creation_id
+  type: uint
+  level: dev
+  desc: DO NOT USE WIP
+  default: 0
+  services:
+  - osd
+  - mon
+  see_also:
+  - allow_speified_snapshot_creation
 - name: osd_object_clean_region_max_num_intervals
   type: int
   level: dev

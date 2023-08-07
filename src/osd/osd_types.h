@@ -1826,6 +1826,8 @@ public:
 
   snapid_t snap_exists(std::string_view s) const;
   void add_snap(const char *n, utime_t stamp);
+  void add_snap_speified(const char *n, utime_t stamp, uint64_t id);
+
   uint64_t add_unmanaged_snap(bool preoctopus_compat);
   void remove_snap(snapid_t s);
   void remove_unmanaged_snap(snapid_t s, bool preoctopus_compat);

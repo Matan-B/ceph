@@ -14103,6 +14103,10 @@ bool OSDMonitor::_is_removed_snap(int64_t pool, snapid_t snap)
 	     << " - pool dne" << dendl;
     return true;
   }
+  if (cct->_conf.get_val<bool>("allow_speified_snapshot_creation")) {
+    // Do not use.
+    return false;
+  }
   if (osdmap.in_removed_snaps_queue(pool, snap)) {
     dout(10) << __func__ << " pool " << pool << " snap " << snap
 	     << " - in osdmap removed_snaps_queue" << dendl;
@@ -14246,9 +14250,16 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
   switch (m->op) {
   case POOL_OP_CREATE_SNAP:
     if (!pp.snap_exists(m->name.c_str())) {
-      pp.add_snap(m->name.c_str(), ceph_clock_now());
-      dout(10) << "create snap in pool " << m->pool << " " << m->name
-	       << " seq " << pp.get_snap_epoch() << dendl;
+      if (cct->_conf.get_val<bool>("allow_speified_snapshot_creation")){
+        int id = cct->_conf.get_val<uint64_t>("allow_speified_snapshot_creation_id");
+        pp.add_snap_speified(m->name.c_str(), ceph_clock_now(), id);
+        dout(10) << "create snap in pool " << m->pool << " " << m->name
+	         << " seq " << id << dendl;
+      } else {
+        pp.add_snap(m->name.c_str(), ceph_clock_now());
+        dout(10) << "create snap in pool " << m->pool << " " << m->name
+	         << " seq " << pp.get_snap_epoch() << dendl;
+      }
       changed = true;
     }
     break;
