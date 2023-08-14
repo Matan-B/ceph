@@ -207,6 +207,17 @@ public:
     ObjectStore::CollectionHandle& ch,
     ghobject_t hoid,
     unsigned max);
+    
+  static std::set<std::string> convert_malformed_key(
+    const std::string& old_key,
+    const bufferlist& value);
+
+  static int convert_malformed(
+    CephContext *cct,
+    ObjectStore *store,
+    ObjectStore::CollectionHandle& ch,
+    ghobject_t hoid,
+    unsigned max);
 #endif
 
   static void record_purged_snaps(
@@ -234,10 +245,14 @@ private:
   std::string to_legacy_raw_key(
     const std::pair<snapid_t, hobject_t> &to_map);
   static bool is_legacy_mapping(const std::string &to_test);
+  static bool is_malformed_mapping(const std::string &to_test);
 
   static std::string get_prefix(int64_t pool, snapid_t snap);
   std::string to_raw_key(
     const std::pair<snapid_t, hobject_t> &to_map) const;
+
+  static std::set<std::string> to_raw_key_no_shard_prefix(
+    const std::pair<snapid_t, hobject_t> &to_map);
 
   std::string to_raw_key(snapid_t snap, const hobject_t& clone) const;
 
