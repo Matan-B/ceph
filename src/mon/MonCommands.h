@@ -1071,6 +1071,12 @@ COMMAND("osd pool rmsnap "
 	"name=pool,type=CephPoolname "
 	"name=snap,type=CephString",
 	"remove snapshot <snap> from <pool>", "osd", "rw")
+COMMAND("osd pool rmsnap_again "
+	"name=pool,type=CephPoolname "
+	"name=lower_snapid_bound,type=CephInt,range=0 "
+	"name=upper_snapid_bound,type=CephInt,range=0 ",
+	"remove non-existing snapshot again <snap> from <pool>",
+	"osd", "rw")
 COMMAND("osd pool ls "
 	"name=detail,type=CephChoices,strings=detail,req=false",
 	"list pools", "osd", "r")

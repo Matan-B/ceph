@@ -13044,6 +13044,56 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
 					      get_last_committed() + 1));
     return true;
+  } else if (prefix == "osd pool rmsnap_again") {
+    string poolstr;
+    cmd_getval(cmdmap, "pool", poolstr);
+    int64_t pool = osdmap.lookup_pg_pool_name(poolstr.c_str());
+    if (pool < 0) {
+      ss << "unrecognized pool '" << poolstr << "'";
+      err = -ENOENT;
+      goto reply;
+    }
+
+    const pg_pool_t *p = osdmap.get_pg_pool(pool);
+    pg_pool_t *pp = 0;
+    if (pending_inc.new_pools.count(pool))
+      pp = &pending_inc.new_pools[pool];
+    if (!pp) {
+      pp = &pending_inc.new_pools[pool];
+      *pp = *p;
+    }
+
+    int64_t lower_snapid_bound =
+      cmd_getval_or<int64_t>(cmdmap, "lower_snapid_bound", 1);
+    int64_t upper_snapid_bound =
+      cmd_getval_or<int64_t>(cmdmap, "upper_snapid_bound", 0);
+
+    if (p->is_unmanaged_snaps_mode() || p->is_pool_snaps_mode()) {
+      for (auto i = lower_snapid_bound;
+           i < upper_snapid_bound && i < (int64_t)p->get_snap_seq();
+           i++) {
+        snapid_t before_begin, before_end;
+        int res = lookup_purged_snap(pool, i,
+		  &before_begin, &before_end);
+        if (res == 0) {
+          ss << "removing snap " << i << " again from pool " << pool << ". ";
+          pending_inc.new_removed_snaps[pool].insert(i);
+        } else {
+          ss << "snap " << i << " still exists in pool. " << pool << ". ";
+        }
+      }
+    } else {
+      ss << "pool " << poolstr << " unvalid snaps mode. ";
+      err = -EINVAL;
+      goto reply;
+    }
+
+    pp->set_snap_epoch(pending_inc.epoch);
+    pending_inc.new_pools[pool] = *pp;
+    getline(ss, rs);
+    wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
+					      get_last_committed() + 1));
+    return true;
   } else if (prefix == "osd pool create") {
     int64_t pg_num = cmd_getval_or<int64_t>(cmdmap, "pg_num", 0);
     int64_t pg_num_min = cmd_getval_or<int64_t>(cmdmap, "pg_num_min", 0);
