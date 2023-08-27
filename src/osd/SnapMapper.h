@@ -157,6 +157,7 @@ public:
   static const std::string LEGACY_MAPPING_PREFIX;
   static const std::string MAPPING_PREFIX;
   static const std::string OBJECT_PREFIX;
+  static const std::string MAPPING_CLEANUP_KEY;
   static const char *PURGED_SNAP_EPOCH_PREFIX;
   static const char *PURGED_SNAP_PREFIX;
 
@@ -218,6 +219,12 @@ public:
     ObjectStore::CollectionHandle& ch,
     ghobject_t hoid,
     unsigned max);
+
+  static int remove_possible_keys(
+    CephContext *cct,
+    ObjectStore *store,
+    ObjectStore::CollectionHandle& ch,
+    ghobject_t hoid);
 #endif
 
   static void record_purged_snaps(

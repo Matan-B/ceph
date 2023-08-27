@@ -44,6 +44,8 @@ const string SnapMapper::LEGACY_MAPPING_PREFIX = "MAP_";
 const string SnapMapper::MAPPING_PREFIX = "SNA_";
 const string SnapMapper::OBJECT_PREFIX = "OBJ_";
 
+const string SnapMapper::MAPPING_CLEANUP_KEY = "MAPPING_CLEANUP_KEY";
+
 const char *SnapMapper::PURGED_SNAP_PREFIX = "PSN_";
 
 /*
@@ -1032,12 +1034,15 @@ int SnapMapper::convert_malformed(
     if (valid) {
       dout(20) << __func__ << "old key: " << iter->key() << dendl;
       old_keys.insert(iter->key());
-      // todo: remove all possible keys once the snapshot is removed again.
       auto possible_keys = convert_malformed_key(iter->key(), iter->value());
       //dout(20) << __func__ << "converted key: " << new_key << dendl;
       for (const auto& key : possible_keys) {
         to_set.emplace(key, iter->value());
       }
+      ceph::buffer::list bl;
+      encode(possible_keys, bl);
+      to_set.emplace(SnapMapper::MAPPING_CLEANUP_KEY + iter->key(),
+                     bl);
       ++n;
       iter->next();
     }
@@ -1068,5 +1073,54 @@ int SnapMapper::convert_malformed(
   }
 
   return n;
+}
+
+// SnapMapper::convert_malformed() stores all the possible keys.
+// Remove the possible keys once the snapshot is removed again
+// using the encoded MAPPING_CLEANUP_KEY value.
+int SnapMapper::remove_possible_keys(
+  CephContext *cct,
+  ObjectStore *store,
+  ObjectStore::CollectionHandle& ch,
+  ghobject_t hoid)
+{
+  dout(10) << __func__ << dendl;
+  uint64_t num_removed = 0;
+
+  auto iter = store->get_omap_iterator(ch, hoid);
+  if (!iter) {
+    return -EIO;
+  }
+
+  auto start = ceph::mono_clock::now();
+
+  iter->upper_bound(SnapMapper::MAPPING_CLEANUP_KEY);
+
+  while (iter->valid()) {
+    std::set<std::string> possible_keys;
+    auto v = iter->value();
+    auto p = v.cbegin();
+    decode(possible_keys, p);
+
+    dout(10) << __func__ << " possible keys decoded "
+             << possible_keys.size() << dendl;
+
+    // remove the possible keys
+    // todo: txn size?
+    {
+      ObjectStore::Transaction t;
+      t.omap_rmkeys(ch->cid, hoid, possible_keys);
+      int r = store->queue_transaction(ch, std::move(t));
+      ceph_assert(r == 0);
+    }
+    num_removed += possible_keys.size();
+    iter->next();
+  }
+
+  auto end = ceph::mono_clock::now();
+  dout(1) << __func__ << " removed " << num_removed << " keys in "
+	      << timespan_str(end - start) << dendl;
+
+  return 0;
 }
 #endif // !WITH_SEASTAR
