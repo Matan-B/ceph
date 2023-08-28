@@ -1176,7 +1176,8 @@ class OSDThrasher(Thrasher):
             timeout=self.config.get('timeout')
             )
         self.log("Waiting for trim")
-        time.sleep(int(self.config.get("map_discontinuity_sleep_time", 40)))
+        time.sleep(int(self.config.get("map_discontinuity_sleep_time", 300)))
+        self.log("Reviving TSTA")
         self.revive_osd()
 
     def choose_action(self):
