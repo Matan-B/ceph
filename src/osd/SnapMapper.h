@@ -215,12 +215,13 @@ public:
     OSDriver::OSTransaction&& txn,
     std::map<epoch_t,mempool::osdmap::map<int64_t,snap_interval_set_t>> purged_snaps);
 
-private:
   static int _lookup_purged_snap(
     CephContext *cct,
     OSDriver& backend,
     int64_t pool, snapid_t snap,
     snapid_t *begin, snapid_t *end);
+
+private:
   static void make_purged_snap_key_value(
     int64_t pool, snapid_t begin,
     snapid_t end, std::map<std::string,ceph::buffer::list> *m);

@@ -3134,6 +3134,15 @@ will start to track new ops received afterwards.";
     f->close_section();
   }
 
+  else if (prefix == "retrim_purged_snaps") {
+    osd_lock.lock();
+    string poolstr;
+    cmd_getval(cmdmap, "pool", poolstr);
+    bool dry_run = false;
+    cmd_getval(cmdmap, "dry_run", dry_run);
+    ret = retrim_purged_snaps(cmdmap, ss, poolstr, dry_run);
+  }
+
   else if (prefix == "scrub_purged_snaps") {
     lock_guard l(osd_lock);
     scrub_purged_snaps();
@@ -4311,6 +4320,17 @@ void OSD::final_init()
     "cache status",
     asok_hook,
     "Get OSD caches statistics");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "retrim_purged_snaps "                                    \
+    "name=pool,type=CephPoolname "                            \
+    "name=lower_snapid_bound,type=CephInt,range=0,req=false " \
+    "name=upper_snapid_bound,type=CephInt,range=0,req=false " \
+    "name=dry_run,type=CephBool,req=false",
+    asok_hook,
+    "Forces re-removal of already removed snapshots in the range "
+    "[lower_snapid_bound, upper_snapid_bound) on pool <pool> in "
+    "order to cause OSDs to re-trim See bug #62596 for details.");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
     "scrub_purged_snaps",
@@ -7197,6 +7217,132 @@ namespace {
       m.lock();
     }
   };
+}
+
+// ***Draft***
+/** retrim_purged_snaps
+ *
+ *  make use of existing snap_trimq_repeat mechanism used by scrub.
+ *
+ *  1) get pool's pg_pool_t
+ *     - verify snaps mode
+ *  2) store all purged snaps (PSN) into force_removed_snapids
+ *  3) find pool pgs (pool_pgids)
+ *  4) for each pg in pool_pgids
+ *     - for each snap in force_removed_snapids (until upper_snapid_bound)
+ *       - pg->queue_snap_retrim(snap);
+ * 
+ *  See queue_snap_retrim:
+ *  ```
+ *  For these 'repeat' trims we skip the final step(s) to mark the snapid as
+ *  purged, since that presumably already happened some time ago.
+ *  ```
+ */
+
+int OSD::retrim_purged_snaps(const cmdmap_t& cmdmap,
+                              std::ostream& ss,
+                              const std::string& poolstr,
+                              bool dry_run)
+{
+  dout(10) << __func__ << dendl;
+  ceph_assert(ceph_mutex_is_locked(osd_lock));
+  clog->debug() << "retrim_purged_snaps starts";
+
+  int64_t pool = get_osdmap()->lookup_pg_pool_name(poolstr.c_str());
+  if (pool < 0) {
+    ss << "unrecognized pool '" << poolstr << "'";
+    return -ENOENT;
+  }
+
+  const pg_pool_t *p = get_osdmap()->get_pg_pool(pool);
+  if (!p) {
+    ss << " pool " << pool << " dne";
+    return -ENOENT;
+  }
+
+  if (!p->is_unmanaged_snaps_mode() && !p->is_pool_snaps_mode()) {
+    ss << "pool " << poolstr << " unvalid snaps mode";
+    return -EINVAL;
+  }
+
+  int64_t lower_snapid_bound =
+    cmd_getval_or<int64_t>(cmdmap, "lower_snapid_bound", 1);
+  int64_t upper_snapid_bound =
+    cmd_getval_or<int64_t>(cmdmap, "upper_snapid_bound",
+                           (int64_t)p->get_snap_seq());
+
+  if (lower_snapid_bound > upper_snapid_bound) {
+    ss << "error, lower bound can't be higher than higher bound";
+    return -EINVAL;
+  }
+
+  // don't retrim past pool's snap_seq
+  auto snapid_limit = std::min(upper_snapid_bound,(int64_t)p->get_snap_seq());
+
+  dout(20) <<  __func__ << "force retrimming snap ids in the range of ["
+           << lower_snapid_bound << ","
+           << snapid_limit << ") from pool " << pool << dendl;
+
+
+  std::set<int64_t> force_removed_snapids;
+  OSDriver osdriver{store.get(), service.meta_ch, make_purged_snaps_oid()};
+  for (auto i = lower_snapid_bound; i < snapid_limit; i++) {
+    snapid_t before_begin, before_end;
+    int res = SnapMapper::_lookup_purged_snap(cct, osdriver,
+                                              pool, i, &before_begin,
+                                              &before_end);
+    if (res == 0) {
+      force_removed_snapids.insert(i);
+    }
+  }
+
+  if (force_removed_snapids.size()) {
+     dout(20) <<  __func__ << "retrimming snapids: " << force_removed_snapids << dendl;
+  } else {
+     dout(20) <<  __func__ << "no snapshots were removed" << dendl;
+  }
+
+  osd_lock.unlock();
+
+  if (dry_run) {
+     return 0;
+  }
+
+  return 0;
+
+  /*
+  std::vector<spg_t> pgids;
+  _get_pgids(&pgids);
+  std::vector<spg_t> pool_pgids;
+  for (const auto &pgid : pgids) {
+    if (pgid.pool() == pool){
+      pool_pgids.insert(pgid);
+    }
+  }
+
+  set<pair<spg_t,snapid_t>> queued;
+  for (pool_pgids) {
+    PGRef pg = lookup_lock_pg(spgid);
+    if (!pg) {
+      dout(20) << __func__ << " pg " << spgid << " not found" << dendl;
+      continue;
+    }
+    for (force_removed_snapids) {
+      pair<spg_t,snapid_t> p(spgid, snap);
+      if (queued.count(p)) {
+        dout(20) << __func__ << " pg " << spgid << " snap " << snap
+	             << " already queued" << dendl;
+        continue;
+      }
+      queued.insert(p);
+      dout(10) << __func__ << " requeue pg " << spgid << " " << pg << " snap "
+	            << snap << dendl;
+      pg->queue_snap_retrim(snap);
+    }
+    pg->unlock();
+  }
+  */
+
 }
 
 void OSD::scrub_purged_snaps()
