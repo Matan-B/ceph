@@ -1,5 +1,6 @@
 tasks:
 - cbt:
+    force-branch: wip-matanb-cbt-crimson-perf
     benchmarks:
       librbdfio:
         op_size: [4096]
