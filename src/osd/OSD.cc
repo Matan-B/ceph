@@ -6734,10 +6734,34 @@ void OSD::_get_purged_snaps()
   monc->send_mon_message(m);
 }
 
+void OSD::_get_all_purged_snaps()
+{
+  // NOTE: this is a naive, stateless implementaiton.  it may send multiple
+  // overlapping requests to the mon, which will be somewhat inefficient, but
+  // it should be reliable.
+   dout(10) << __func__ << " newest_map " << superblock.current_epoch << dendl;
+  MMonGetPurgedSnaps *m = new MMonGetPurgedSnaps(
+    0, // get all purged
+    superblock.current_epoch,
+    true);
+  monc->send_mon_message(m);
+}
+
+
 void OSD::handle_get_purged_snaps_reply(MMonGetPurgedSnapsReply *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
   ObjectStore::Transaction t;
+  if (!m->first) {
+    // _get_all_purged_snaps
+    OSDriver osdriver{store.get(), service.meta_ch, make_purged_snaps_oid()};
+    SnapMapper::record_purged_snaps(
+      cct,
+      osdriver,
+      osdriver.get_transaction(&t),
+      m->purged_snaps);
+  }
+
   if (!is_preboot() ||
       m->last < superblock.purged_snaps_last) {
     goto out;
