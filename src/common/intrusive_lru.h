@@ -45,6 +45,8 @@ template <typename Config>
 class intrusive_lru_base {
   unsigned use_count = 0;
 
+  bool remove_on_unref = false;
+
   // lru points to the corresponding intrusive_lru
   // which will be set to null if its use_count
   // is zero (aka unreferenced).
@@ -154,6 +156,8 @@ public:
    * creates it otherwise.  Return is:
    * std::pair(reference_to_val, found)
    */
+
+  //remove_on_unref?
   std::pair<TRef, bool> get_or_create(const K &k) {
     typename lru_set_t::insert_commit_data icd;
     auto [iter, missing] = lru_set.insert_check(
@@ -168,6 +172,20 @@ public:
       access(*iter);
       return {TRef(static_cast<T*>(&*iter)), true};
     }
+  }
+
+  /*
+   * Marks all elemets as remove_on_unref and clears all the
+   * unreferened elements.
+   */
+  void clear() {
+    for (auto i = lru_set.begin(); i != lru_set.end(); i++) {
+      if ((*i).lru) {
+        (*i).remove_on_unref = true;
+      }
+    }
+    clear_range(*lru_set.begin(),
+                *lru_set.end());
   }
 
   /*
@@ -201,6 +219,8 @@ public:
    * Returns the TRef corresponding to k if it exists or
    * nullptr otherwise.
    */
+
+  //remove_on_unref?
   TRef get(const K &k) {
     if (auto iter = lru_set.find(k); iter != std::end(lru_set)) {
       access(*iter);
@@ -236,7 +256,11 @@ void intrusive_ptr_release(intrusive_lru_base<Config> *p) {
   assert(p->use_count > 0);
   --p->use_count;
   if (p->use_count == 0) {
-    p->lru->mark_as_unreferenced(*p);
+    if (p->remove_on_unref) {
+      delete p;
+    } else {
+      p->lru->mark_as_unreferenced(*p);
+    }
   }
 }
 
