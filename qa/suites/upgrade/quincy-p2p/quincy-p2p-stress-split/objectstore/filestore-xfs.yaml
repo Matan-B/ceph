@@ -5,6 +5,10 @@ overrides:
       osd:
         osd objectstore: filestore
         osd sloppy crc: true
+        debug filestore: 20
+        debug rocksdb: 10
+        osd op thread timeout: 900
+        osd op thread suicide timeout: 1800
   ceph-deploy:
     fs: xfs
     filestore: True
