@@ -1,0 +1,17 @@
+overrides:
+  ceph:
+    log-ignorelist:
+    - \(POOL_APP_NOT_ENABLED\)
+tasks:
+- rados:
+    clients: [client.0]
+    ops: 50000
+    objects: 5000
+    op_weights:
+      read: 1000
+      write: 1000
+      delete: 500
+      snap_create: 500
+      snap_remove: 500
+      rollback: 500
+      copy_from: 500
