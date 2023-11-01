@@ -874,38 +874,75 @@ PG::do_osd_ops_execute(
     [success_func=std::move(success_func), rollbacker, this, failure_func_ptr]
     (auto submitted_fut, auto _pre_all_completed_fut) mutable {
 
-    auto pre_all_completed_fut = _pre_all_completed_fut.safe_then_interruptible_tuple(
-      std::move(success_func),
-      crimson::ct_error::object_corrupted::handle(
-      [rollbacker, this] (const std::error_code& e) mutable {
+    auto pre_all_completed_fut =
+      _pre_all_completed_fut.safe_then_interruptible([] {
+        return OpsExecuter::osd_op_errorator::now();
+      }, OpsExecuter::osd_op_errorator::pass_further{}
+    );
+
+    /*
+     WIP: The following line (900) is not correct.
+          pre_all_completed_fut should be passed
+          as all_completed_fut (pg_rep_op_fut_t's third param).
+          The probelem with scheduling `pre_all_completed_fut`
+          here is that it'll be executed *before*
+          `submitted_fut` (pg_rep_op_fut_t's first param).
+          And won't be bounded to ClientRequest::do_process
+          use of the returned pg_rep_op_fut_t.
+
+          However, the error handling phase (which should take
+          place here) is only possible after executing `pre_all_completed_fut`.
+
+          TODO: 1) Is it possible to handle `pre_all_completed_fut`
+                   the errors before actaully getting here?
+
+    */
+    return pre_all_completed_fut.safe_then_interruptible(
+    [submitted_fut = std::move(submitted_fut), success_func=std::move(success_func)] () mutable {
+      return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
+        std::move(submitted_fut),        // submitted_fut
+        std::move(seastar::now()),       // error_log_fut
+        std::move(success_func())        // all_completed_fut
+      );
+    }, crimson::ct_error::object_corrupted::handle(
+      [rollbacker, this, submitted_fut = std::move(submitted_fut)] (const std::error_code& e) mutable {
       // this is a path for EIO. it's special because we want to fix the obejct
       // and try again. that is, the layer above `PG::do_osd_ops` is supposed to
       // restart the execution.
       return rollbacker.rollback_obc_if_modified(e).then_interruptible(
-      [obc=rollbacker.get_obc(), this] {
+      [obc=rollbacker.get_obc(), this, submitted_fut = std::move(submitted_fut)] () mutable {
         return repair_object(obc->obs.oi.soid,
                              obc->obs.oi.version
-        ).then_interruptible([] {
+        ).then_interruptible([submitted_fut = std::move(submitted_fut)] () mutable {
           auto all_completed_fut =
             do_osd_ops_iertr::future<Ret>{crimson::ct_error::eagain::make()};
 
-          return all_completed_fut;
+          return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
+            std::move(submitted_fut),        // submitted_fut
+            std::move(seastar::now()),       // error_log_fut
+            std::move(all_completed_fut)     // all_completed_fut
+          );
         });
       });
     }), OpsExecuter::osd_op_errorator::all_same_way(
-        [rollbacker, failure_func_ptr]
-        (const std::error_code& e) mutable {
-          return rollbacker.rollback_obc_if_modified(e).then_interruptible(
-          [e, failure_func_ptr] {
-            return (*failure_func_ptr)(e);
-          });
-    }));
+       [rollbacker, failure_func_ptr, submitted_fut = std::move(submitted_fut)]
+       (const std::error_code& e) mutable {
 
-    return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
-      std::move(submitted_fut),        // submitted_fut
-      std::move(seastar::now()),       // error_log_fut
-      std::move(pre_all_completed_fut) // all_completed_fut
+          auto rollback_fut = rollbacker.rollback_obc_if_modified(e);
+
+          return rollback_fut.then_interruptible([e, failure_func_ptr, submitted_fut = std::move(submitted_fut)] () mutable {
+          // failure_func_ptr returns a pair of `error_log_fut` and `all_completed_fut`
+            return (*failure_func_ptr)(e).then([submitted_fut = std::move(submitted_fut)] (auto fut_pair) mutable {
+              return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
+                std::move(submitted_fut), // submitted_fut
+                std::move(fut_pair.first), // error_log_fut
+                std::move(fut_pair.second) // all_completed_fut
+              );
+            });
+          });
+      })
     );
+
   }, OpsExecuter::osd_op_errorator::all_same_way(
     [rollbacker, failure_func_ptr]
     (const std::error_code& e) mutable {
