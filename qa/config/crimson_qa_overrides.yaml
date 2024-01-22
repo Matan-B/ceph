@@ -5,6 +5,7 @@ overrides:
     conf:
       global:
         enable experimental unrecoverable data corrupting features: crimson
+        bluestore throttle deferred bytes: 0
       mon:
         osd pool default crimson: true
       osd:
