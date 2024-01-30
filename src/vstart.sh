@@ -1657,7 +1657,16 @@ EOF
 fi
 
 if [ "$ceph_osd" == "crimson-osd" ]; then
-    $CEPH_BIN/ceph -c $conf_fn config set osd crimson_seastar_smp $crimson_smp
+    start=0
+    end=$(($CEPH_NUM_OSD-1))
+    for osd in `seq $start $end`
+    do
+        bottom_cpu=$(( osd * crimson_smp ))
+        top_cpu=$(( bottom_cpu + crimson_smp - 1 ))
+        echo "$CEPH_BIN/ceph -c $conf_fn config set osd.$osd crimson_seastar_cpu_cores $bottom_cpu-$top_cpu"
+        $CEPH_BIN/ceph -c $conf_fn config set "osd.$osd" crimson_seastar_cpu_cores "$bottom_cpu-$top_cpu"
+    done
+
 fi
 
 if [ $CEPH_NUM_MGR -gt 0 ]; then

@@ -19,13 +19,10 @@ options:
   default: 6
   flags:
   - startup
-- name: crimson_seastar_smp
-  type: uint
+- name: crimson_seastar_cpu_cores
+  type: str
   level: advanced
-  desc: Number of seastar reactor threads to use for the osd
-  default: 1
-  flags:
-  - startup
+  desc: CPU cores on which  seastar reactor threads threads will run in cpuset(7) format
 - name: crimson_alien_thread_cpu_cores
   type: str
   level: advanced
