@@ -148,19 +148,20 @@ _get_early_config(int argc, const char *argv[])
 	if (auto found = std::find_if(
 	      std::begin(early_args),
 	      std::end(early_args),
-	      [](auto* arg) { return "--smp"sv == arg; });
+	      [](auto* arg) { return "--cpuset"sv == arg; });
 	    found == std::end(early_args)) {
 
-	  // Set --smp based on crimson_seastar_cpu_cores config option
-	  ret.early_args.emplace_back("--smp");
+	  // Set --cpuset based on crimson_seastar_cpu_cores config option
+	  // --smp default is one per CPU
+	  ret.early_args.emplace_back("--cpuset");
 
 	  auto smp_config = seastar::resource::parse_cpuset(
 	      crimson::common::get_conf<std::string>("crimson_seastar_cpu_cores"));
 	  if (!smp_config.has_value()) {
-	    smp_config = 1;
+	    ceph_abort();
 	  }
-	  ret.early_args.emplace_back(fmt::format("{}", smp_config.value().size()));
-	  logger().info("get_early_config: set --smp {}", smp_config.value().size());
+	  ret.early_args.emplace_back(fmt::format("{}", smp_config.value()));
+	  logger().info("get_early_config: set --cpuset {}", smp_config.value());
 	}
 	return 0;
       });
