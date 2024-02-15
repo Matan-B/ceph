@@ -151,13 +151,15 @@ struct error_code;
   ceph::unique_leakable_ptr<raw> claim_buffer(unsigned len, char *buf, deleter del);
 
 #ifdef HAVE_SEASTAR
-  /// create a raw buffer to wrap seastar cpu-local memory, using foreign_ptr to
-  /// make it safe to share between cpus
-  ceph::unique_leakable_ptr<buffer::raw> create(seastar::temporary_buffer<char>&& buf);
+  /// create a raw buffer pointer to wrap seastar cpu-local memory,
+  /// using foreign_ptr to make it safe to share between cpus
+  buffer::ptr create(seastar::temporary_buffer<char>&& buf);
   /// create a raw buffer to wrap seastar cpu-local memory, without the safety
   /// of foreign_ptr. the caller must otherwise guarantee that the buffer ptr is
   /// destructed on this cpu
   ceph::unique_leakable_ptr<buffer::raw> create_local(seastar::temporary_buffer<char>&& buf);
+
+  buffer::ptr create_delay_release(seastar::temporary_buffer<char>&& buf);
 #endif
 
   /*

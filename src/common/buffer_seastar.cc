@@ -14,11 +14,14 @@
 
 #include <seastar/core/sharded.hh>
 #include <seastar/net/packet.hh>
+#include <seastar/util/later.hh>
+#include <seastar/core/sleep.hh>
 
 #include "include/buffer_raw.h"
 #include "buffer_seastar.h"
 
 using temporary_buffer = seastar::temporary_buffer<char>;
+using namespace std::chrono_literals;
 
 namespace ceph::buffer {
 
@@ -27,6 +30,19 @@ class raw_seastar_foreign_ptr : public raw {
  public:
   raw_seastar_foreign_ptr(temporary_buffer&& buf)
     : raw(buf.get_write(), buf.size()), ptr(std::move(buf)) {}
+
+  ~raw_seastar_foreign_ptr() {
+    if (ptr.get_owner_shard() != seastar::this_shard_id()) {
+      char buf[200];
+      int rc = pthread_getname_np(pthread_self(), buf ,200);
+      assert(rc == 0);
+      if (std::string_view str(buf);
+          str == "alien-store-tp" || str == "bstore_kv_final") {
+        // we should let a seastar reactor destroy this memory, we are alien
+        ceph_abort();
+      }
+    }
+  }
 };
 
 class raw_seastar_local_ptr : public raw {
@@ -38,7 +54,18 @@ class raw_seastar_local_ptr : public raw {
 
 inline namespace v15_2_0 {
 
-ceph::unique_leakable_ptr<buffer::raw> create(temporary_buffer&& buf) {
+buffer::ptr create_delay_release(temporary_buffer&& buf) {
+  buffer::ptr result = create(std::move(buf));
+  buffer::ptr extra_reference(result);
+  ceph_assert(result.raw_nref() == 2);
+  std::ignore = seastar::do_until(
+    [extender = std::move(extra_reference)]
+    {return extender.raw_nref() == 1;},
+    [] {return seastar::now();});
+  return result;
+}
+
+buffer::ptr create(temporary_buffer&& buf) {
   return ceph::unique_leakable_ptr<buffer::raw>(
     new raw_seastar_foreign_ptr(std::move(buf)));
 }
