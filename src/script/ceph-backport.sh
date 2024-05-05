@@ -150,6 +150,13 @@ function blindly_set_pr_metadata {
     curl -u ${github_user}:${github_token} --silent --data-binary "$json_blob" "https://api.github.com/repos/ceph/ceph/issues/${pr_number}" >/dev/null 2>&1 || true
 }
 
+function blindly_set_pr_label_squid {
+    local pr_number="$1"
+    curl -L -X POST -u ${github_user}:${github_token} --silent "https://api.github.com/repos/ceph/ceph/issues/${pr_number}/labels" -d '{"labels":["crimson backport squid"]}' || true
+}
+
+
+
 function check_milestones {
     local milestones_to_check
     milestones_to_check="$(echo "$1" | tr '\n' ' ' | xargs)"
@@ -1007,6 +1014,7 @@ function try_known_milestones {
         pacific) mn="14" ;;
         quincy) mn="15" ;;
         reef) mn="16" ;;
+        squid) mn="20" ;;
     esac
     echo "$mn"
 }
@@ -1407,7 +1415,7 @@ fi
 
 if [[ $ORIGINAL_PR =~ ^[0-9]+$ ]] ; then
     original_pr=$ORIGINAL_PR
-    echo -n "Backporting {$original_pr} to reef"
+    echo -n "Backporting {$original_pr} to squid"
 else
     error "Invalid or missing argument"
     usage
@@ -1614,5 +1622,6 @@ fi
 
 if [ "$PR_PHASE" ] || [ "$EXISTING_PR" ] ; then
     maybe_update_pr_milestone_labels
+    blindly_set_pr_label_squid "$backport_pr_number"
     pgrep firefox >/dev/null && firefox "${backport_pr_url}"
 fi
