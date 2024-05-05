@@ -161,36 +161,6 @@ function check_milestones {
     dump_flagged_prs
 }
 
-function check_tracker_status {
-    local -a ok_statuses=("new" "need more info")
-    local ts="$1"
-    local error_msg
-    local tslc="${ts,,}"
-    local tslc_is_ok=
-    for oks in "${ok_statuses[@]}"; do
-        if [ "$tslc" = "$oks" ] ; then
-            debug "Tracker status $ts is OK for backport to proceed"
-            tslc_is_ok="yes"
-            break
-        fi
-    done
-    if [ "$tslc_is_ok" ] ; then
-        true
-    else
-        if [ "$tslc" = "in progress" ] ; then
-            error_msg="backport $redmine_url is already in progress"
-        else
-            error_msg="backport $redmine_url is closed (status: ${ts})"
-        fi
-        if [ "$FORCE" ] || [ "$EXISTING_PR" ] ; then
-            warning "$error_msg"
-        else
-            error "$error_msg"
-        fi
-    fi
-    echo "$tslc_is_ok"
-}
-
 function cherry_pick_phase {
     local base_branch
     local default_val
@@ -201,18 +171,10 @@ function cherry_pick_phase {
     local sha1_to_cherry_pick
     local singular_or_plural_commit
     local yes_or_no_answer
-    populate_original_issue
-    if [ -z "$original_issue" ] ; then
-        error "Could not find original issue"
-        info "Does ${redmine_url} have a \"Copied from\" relation?"
-        false
-    fi
-    info "Parent issue: ${original_issue_url}"
 
     populate_original_pr
     if [ -z "$original_pr" ]; then
         error "Could not find original PR"
-        info "Is the \"Pull request ID\" field of ${original_issue_url} populated?"
         false
     fi
     info "Parent issue ostensibly fixed by: ${original_pr_url}"
@@ -416,27 +378,11 @@ function existing_pr_routine {
         fi
         verbose "New PR title: ${new_pr_title}"
     fi
-    redmine_url_without_scheme="${redmine_url//http?:\/\//}"
-    verbose "Redmine URL without scheme: $redmine_url_without_scheme"
-    if [[ "$clipped_pr_body" =~ $redmine_url_without_scheme ]] ; then
-        info "Existing backport PR ${backport_pr_number} already mentions $redmine_url"
-        if [ "$FORCE" ] ; then
-            warning "--force was given, so updating the PR body anyway"
-            update_pr_body="yes"
-        fi
-    else
-        warning "Existing backport PR ${backport_pr_number} does NOT mention $redmine_url - adding it"
-        update_pr_body="yes"
-    fi
     if [ "$update_pr_body" ] ; then
-        new_pr_body="backport tracker: ${redmine_url}"
+        new_pr_body="backport test1"
         if [ "${original_pr_url}" ] ; then
             new_pr_body="${new_pr_body}
 possibly a backport of ${original_pr_url}"
-        fi
-        if [ "${original_issue_url}" ] ; then
-            new_pr_body="${new_pr_body}
-parent tracker: ${original_issue_url}"
         fi
         new_pr_body="${new_pr_body}
 
@@ -898,7 +844,6 @@ function milestone_number_from_remote_api {
         remote_api_output=$(curl -u ${github_user}:${github_token} --silent -X GET "https://api.github.com/repos/ceph/ceph/milestones")
         milestones=$(echo "$remote_api_output" | jq '.[].title')
         info "Valid values are ${milestones}"
-        info "(This probably means the Release field of ${redmine_url} is populated with"
         info "an unexpected value - i.e. it does not match any of the GitHub milestones.)"
         false
     fi
@@ -913,29 +858,13 @@ function number_to_url {
     local number="$2"
     if [ "$number_type" = "github" ] ; then
         echo "${github_endpoint}/pull/${number}"
-    elif [ "$number_type" = "redmine" ] ; then
-        echo "${redmine_endpoint}/issues/${number}"
     else
         assert_fail "internal error in number_to_url: bad type ->$number_type<-"
     fi
 }
 
-function populate_original_issue {
-    if [ -z "$original_issue" ] ; then
-        original_issue=$(curl --silent "${redmine_url}.json?include=relations" |
-            jq '.issue.relations[] | select(.relation_type | contains("copied_to")) | .issue_id')
-        original_issue_url="$(number_to_url "redmine" "${original_issue}")"
-    fi
-}
-
 function populate_original_pr {
-    if [ "$original_issue" ] ; then
-        if [ -z "$original_pr" ] ; then
-            original_pr=$(curl --silent "${original_issue_url}.json" |
-                          jq -r '.issue.custom_fields[] | select(.id | contains(21)) | .value')
-            original_pr_url="$(number_to_url "github" "${original_pr}")"
-        fi
-    fi
+    original_pr_url="$(number_to_url "github" "${original_pr}")"
 }
 
 function print_in_hex {
@@ -1437,8 +1366,9 @@ HELP=""
 INTERACTIVE_SETUP_ROUTINE=""
 ISSUE=""
 PR_PHASE="yes"
+ORIGINAL_PR=""
 SETUP_OPTION=""
-TRACKER_PHASE="yes"
+TRACKER_PHASE="no"
 TROUBLESHOOTING_ADVICE=""
 USAGE_ADVICE=""
 VERBOSE=""
@@ -1459,7 +1389,7 @@ while true ; do
         --usage) ADVICE="$1" ; USAGE_ADVICE="$1" ; shift ;;
         --verbose|-v) VERBOSE="$1" ; shift ;;
         --version) display_version_message_and_exit ;;
-        --) shift ; ISSUE="$1" ; break ;;
+        --) shift ; ORIGINAL_PR="$1" ; break ;;
         *) echo "Internal error" ; false ;;
     esac
 done
@@ -1472,11 +1402,12 @@ if [ "$ADVICE" ] ; then
 fi
 
 if [ "$SETUP_OPTION" ] || [ "$CHECK_MILESTONES" ] ; then
-    ISSUE="0"
+    ORIGINAL_PR="0"
 fi
 
-if [[ $ISSUE =~ ^[0-9]+$ ]] ; then
-    issue=$ISSUE
+if [[ $ORIGINAL_PR =~ ^[0-9]+$ ]] ; then
+    original_pr=$ORIGINAL_PR
+    echo -n "Backporting {$original_pr} to reef"
 else
     error "Invalid or missing argument"
     usage
@@ -1533,7 +1464,7 @@ fi
 if [ "$INTERACTIVE_SETUP_ROUTINE" ] || [ "$SETUP_OPTION" ] ; then
     echo
     if [ "$setup_ok" ] ; then
-        if [ "$ISSUE" ] && [ "$ISSUE" != "0" ] ; then
+        if [ "$ORIGINAL_PR" ] && [ "$ORIGINAL_PR" != "0" ] ; then
             true
         else
             exit 0
@@ -1566,70 +1497,24 @@ fi
 # query remote Redmine API for information about the Backport tracker issue
 #
 
-redmine_url="$(number_to_url "redmine" "${issue}")"
-debug "Considering Redmine issue: $redmine_url - is it in the Backport tracker?"
-
-remote_api_output="$(curl --silent "${redmine_url}.json")"
-tracker="$(echo "$remote_api_output" | jq -r '.issue.tracker.name')"
-if [ "$tracker" = "Backport" ]; then
-    debug "Yes, $redmine_url is a Backport issue"
-else
-    error "Issue $redmine_url is not a Backport"
-    info "(This script only works with Backport tracker issues.)"
-    false
+verbose "Querying GitHub API for active milestones"
+remote_api_output="$(curl -u ${github_user}:${github_token} --silent -X GET "https://api.github.com/repos/ceph/ceph/milestones")"
+active_milestones="$(echo "$remote_api_output" | jq -r '.[] | .title')"
+if [ "$active_milestones" = "null" ] ; then
+    error "Could not determine the active milestones"
+    bail_out_github_api "$remote_api_output"
 fi
 
-debug "Looking up release/milestone of $redmine_url"
-milestone="$(echo "$remote_api_output" | jq -r '.issue.custom_fields[0].value')"
-if [ "$milestone" ] ; then
-    debug "Release/milestone: $milestone"
-else
-    error "could not obtain release/milestone from ${redmine_url}"
-    false
+if [ "$CHECK_MILESTONES" ] ; then
+    check_milestones "$active_milestones"
+    exit 0
 fi
 
-debug "Looking up status of $redmine_url"
-tracker_status_id="$(echo "$remote_api_output" | jq -r '.issue.status.id')"
-tracker_status_name="$(echo "$remote_api_output" | jq -r '.issue.status.name')"
-if [ "$tracker_status_name" ] ; then
-    debug "Tracker status: $tracker_status_name"
-    if [ "$FORCE" ] || [ "$EXISTING_PR" ] ; then
-        test "$(check_tracker_status "$tracker_status_name")" || true
-    else
-        test "$(check_tracker_status "$tracker_status_name")"
-    fi
-else
-    error "could not obtain status from ${redmine_url}"
-    false
-fi
-
-tracker_title="$(echo "$remote_api_output" | jq -r '.issue.subject')"
-debug "Title of $redmine_url is ->$tracker_title<-"
-
-tracker_description="$(echo "$remote_api_output" | jq -r '.issue.description')"
-debug "Description of $redmine_url is ->$tracker_description<-"
-
-tracker_assignee_id="$(echo "$remote_api_output" | jq -r '.issue.assigned_to.id')"
-tracker_assignee_name="$(echo "$remote_api_output" | jq -r '.issue.assigned_to.name')"
-if [ "$tracker_assignee_id" = "null" ] || [ "$tracker_assignee_id" = "$redmine_user_id" ] ; then
-    true
-else
-    error_msg_1="$redmine_url is assigned to someone else: $tracker_assignee_name (ID $tracker_assignee_id)"
-    error_msg_2="(my ID is $redmine_user_id)"
-    if [ "$FORCE" ] || [ "$EXISTING_PR" ] ; then
-        warning "$error_msg_1"
-        info "$error_msg_2"
-        info "--force and/or --existing-pr given: continuing execution"
-    else
-        error "$error_msg_1"
-        info "$error_msg_2"
-        info "Cowardly refusing to continue"
-        false
-    fi
-fi
+milestone="squid"
+debug "Release/milestone: $milestone"
 
 if [ -z "$(is_active_milestone "$milestone")" ] ; then
-    error "$redmine_url is a backport to $milestone which is not an active milestone"
+    error "backport to $milestone which is not an active milestone"
     info "Cowardly refusing to work on a backport to an inactive release"
     false
 fi
@@ -1646,7 +1531,7 @@ info "milestone/release is $milestone"
 debug "milestone number is $milestone_number"
 
 if [ "$CHERRY_PICK_PHASE" ] ; then
-    local_branch=wip-${issue}-${target_branch}
+    local_branch=wip-${original_pr}-${target_branch}
     if git show-ref --verify --quiet "refs/heads/$local_branch" ; then
         if [ "$FORCE" ] ; then
             warning "local branch $local_branch already exists"
@@ -1686,34 +1571,24 @@ if [ "$PR_PHASE" ] ; then
     maybe_restore_set_x
     
     original_issue=""
-    original_pr=""
+    original_pr=$ORIGINAL_PR
     original_pr_url=""
-    
+
     debug "Generating backport PR description"
-    populate_original_issue
     populate_original_pr
-    desc="backport tracker: ${redmine_url}"
-    if [ "$original_pr" ] || [ "$original_issue" ] ; then
-        desc="${desc}\n\n---\n"
-        [ "$original_pr"    ] && desc="${desc}\nbackport of $(number_to_url "github" "${original_pr}")"
-        [ "$original_issue" ] && desc="${desc}\nparent tracker: $(number_to_url "redmine" "${original_issue}")"
-    fi
-    desc="${desc}\n\nthis backport was staged using ceph-backport.sh version ${SCRIPT_VERSION}\nfind the latest version at ${github_endpoint}/blob/main/src/script/ceph-backport.sh"
-    
-    debug "Generating backport PR title"
+    desc=""
     if [ "$original_pr" ] ; then
-        backport_pr_title="${milestone}: $(curl --silent https://api.github.com/repos/ceph/ceph/pulls/${original_pr} | jq -r '.title')"
-    else
-        if [[ $tracker_title =~ ^${milestone}: ]] ; then
-            backport_pr_title="${tracker_title}"
-        else
-            backport_pr_title="${milestone}: ${tracker_title}"
-        fi
+        [ "$original_pr"    ] && desc="${desc}\nbackport of $(number_to_url "github" "${original_pr}")"
     fi
+    desc="${desc}\n\nthis backport was staged using crimson-backport.sh which is based on ceph-backport.sh version ${SCRIPT_VERSION}\nfind the latest version at ${github_endpoint}/blob/main/src/script/ceph-backport.sh"
+    desc="${desc}\n\nSee: https://gist.github.com/Matan-B/3366024c130634942d0b1227112663e1 \n\n"
+
+    debug "Generating backport PR title"
+    backport_pr_title="${milestone}: $(curl --silent https://api.github.com/repos/ceph/ceph/pulls/${original_pr} | jq -r '.title')"
     if [[ "$backport_pr_title" =~ \" ]] ; then
         backport_pr_title="${backport_pr_title//\"/\\\"}"
     fi
-    
+
     debug "Opening backport PR"
     if [ "$EXPLICIT_FORK" ] ; then
         source_repo="$EXPLICIT_FORK"
@@ -1731,7 +1606,6 @@ if [ "$PR_PHASE" ] ; then
 fi
 
 if [ "$EXISTING_PR" ] ; then
-    populate_original_issue
     populate_original_pr
     backport_pr_number="$EXISTING_PR"
     backport_pr_url="$(number_to_url "github" "$backport_pr_number")"
@@ -1741,69 +1615,4 @@ fi
 if [ "$PR_PHASE" ] || [ "$EXISTING_PR" ] ; then
     maybe_update_pr_milestone_labels
     pgrep firefox >/dev/null && firefox "${backport_pr_url}"
-fi
-
-if [ "$TRACKER_PHASE" ] ; then
-    debug "Considering Backport tracker issue ${redmine_url}"
-    status_should_be=2 # In Progress
-    desc_should_be="${backport_pr_url}"
-    assignee_should_be="${redmine_user_id}"
-    if [ "$EXISTING_PR" ] ; then
-        data_binary="{\"issue\":{\"description\":\"${desc_should_be}\",\"status_id\":${status_should_be}}}"
-    else
-        data_binary="{\"issue\":{\"description\":\"${desc_should_be}\",\"status_id\":${status_should_be},\"assigned_to_id\":${assignee_should_be}}}"
-    fi
-    remote_api_status_code="$(curl --write-out '%{http_code}' --output /dev/null --silent -X PUT --header "Content-type: application/json" --data-binary "${data_binary}" "${redmine_url}.json?key=$redmine_key")"
-    if [ "$FORCE" ] || [ "$EXISTING_PR" ] ; then 
-        true
-    else
-        if [ "${remote_api_status_code:0:1}" = "2" ] ; then
-            true
-        elif [ "${remote_api_status_code:0:1}" = "4" ] ; then
-            warning "remote API ${redmine_endpoint} returned status ${remote_api_status_code}"
-            info "This merely indicates that you cannot modify issue fields at ${redmine_endpoint}"
-            info "and does not limit your ability to do backports."
-        else
-            error "Remote API ${redmine_endpoint} returned unexpected response code ${remote_api_status_code}"
-        fi
-    fi
-    # check if anything actually changed on the Redmine issue
-    remote_api_output=$(curl --silent "${redmine_url}.json?include=journals")
-    status_is="$(echo "$remote_api_output" | jq -r '.issue.status.id')"
-    desc_is="$(echo "$remote_api_output" | jq -r '.issue.description')"
-    assignee_is="$(echo "$remote_api_output" | jq -r '.issue.assigned_to.id')"
-    tracker_was_updated=""
-    tracker_is_in_desired_state="yes"
-    [ "$(tracker_component_was_updated "status" "$tracker_status_id" "$status_is")" ] && tracker_was_updated="yes"
-    [ "$(tracker_component_was_updated "desc" "$tracker_description" "$desc_is")" ] && tracker_was_updated="yes"
-    if [ "$EXISTING_PR" ] ; then
-         true
-    else
-         [ "$(tracker_component_was_updated "assignee" "$tracker_assignee_id" "$assignee_is")" ] && tracker_was_updated="yes"
-    fi
-    [ "$(tracker_component_is_in_desired_state "status" "$status_is" "$status_should_be")" ] || tracker_is_in_desired_state=""
-    [ "$(tracker_component_is_in_desired_state "desc" "$desc_is" "$desc_should_be")" ] || tracker_is_in_desired_state=""
-    if [ "$EXISTING_PR" ] ; then
-        true
-    else
-        [ "$(tracker_component_is_in_desired_state "assignee" "$assignee_is" "$assignee_should_be")" ] || tracker_is_in_desired_state=""
-    fi
-    if [ "$tracker_is_in_desired_state" ] ; then
-        [ "$tracker_was_updated" ] && info "Backport tracker ${redmine_url} was updated"
-        info "Backport tracker ${redmine_url} is in the desired state"
-        pgrep firefox >/dev/null && firefox "${redmine_url}"
-        exit 0
-    fi
-    if [ "$tracker_was_updated" ] ; then
-        warning "backport tracker ${redmine_url} was updated, but is not in the desired state. Please check it."
-        pgrep firefox >/dev/null && firefox "${redmine_url}"
-        exit 1
-    else
-        data_binary="{\"issue\":{\"notes\":\"please link this Backport tracker issue with GitHub PR ${desc_should_be}\nceph-backport.sh version ${SCRIPT_VERSION}\"}}"
-        remote_api_status_code=$(curl --write-out '%{http_code}' --output /dev/null --silent -X PUT --header "Content-type: application/json" --data-binary "${data_binary}" "${redmine_url}.json?key=$redmine_key")
-        if [ "${remote_api_status_code:0:1}" = "2" ] ; then
-            info "Comment added to ${redmine_url}"
-        fi
-        exit 0
-    fi
 fi
