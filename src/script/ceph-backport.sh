@@ -1589,7 +1589,7 @@ if [ "$PR_PHASE" ] ; then
         [ "$original_pr"    ] && desc="${desc}\nbackport of $(number_to_url "github" "${original_pr}")"
     fi
     desc="${desc}\n\nthis backport was staged using crimson-backport.sh which is based on ceph-backport.sh version ${SCRIPT_VERSION}\nfind the latest version at ${github_endpoint}/blob/main/src/script/ceph-backport.sh"
-    desc="${desc}\n\nSee: https://gist.github.com/Matan-B/3366024c130634942d0b1227112663e1 \n\n"
+    # desc="${desc}\n\nSee: https://gist.github.com/Matan-B/3366024c130634942d0b1227112663e1 \n\n"
 
     debug "Generating backport PR title"
     backport_pr_title="${milestone}: $(curl --silent https://api.github.com/repos/ceph/ceph/pulls/${original_pr} | jq -r '.title')"
