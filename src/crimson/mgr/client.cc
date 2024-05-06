@@ -87,17 +87,13 @@ void Client::ms_handle_connect(
 
 void Client::ms_handle_reset(crimson::net::ConnectionRef c, bool /* is_replace */)
 {
-  gate.dispatch_in_background(__func__, *this, [this, c] {
-    if (conn == c) {
-      report_timer.cancel();
-      return reconnect();
-    } else {
-      return seastar::now();
-    }
-  });
+  if (conn == c) {
+    report_timer.cancel();
+    reconnect();
+  }
 }
 
-seastar::future<> Client::reconnect()
+void Client::reconnect()
 {
   if (conn) {
     conn->mark_down();
@@ -105,7 +101,7 @@ seastar::future<> Client::reconnect()
   }
   if (!mgrmap.get_available()) {
     logger().warn("No active mgr available yet");
-    return seastar::now();
+    return;
   }
   auto retry_interval = std::chrono::duration<double>(
     local_conf().get_val<double>("mgr_connect_retry_interval"));
@@ -120,21 +116,18 @@ seastar::future<> Client::reconnect()
       return;
     }
     conn = msgr.connect(peer, CEPH_ENTITY_TYPE_MGR);
-  });
+  }).wait();
 }
 
 seastar::future<> Client::handle_mgr_map(crimson::net::ConnectionRef,
                                          Ref<MMgrMap> m)
 {
   mgrmap = m->get_map();
-  if (!conn) {
-    return reconnect();
-  } else if (conn->get_peer_addr() !=
-             mgrmap.get_active_addrs().legacy_addr()) {
-    return reconnect();
-  } else {
-    return seastar::now();
+  if (!conn || conn->get_peer_addr() !=
+               mgrmap.get_active_addrs().legacy_addr()) {
+    reconnect();
   }
+  return seastar::now();
 }
 
 seastar::future<> Client::handle_mgr_conf(crimson::net::ConnectionRef,
