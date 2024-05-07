@@ -1592,7 +1592,7 @@ if [ "$PR_PHASE" ] ; then
     # desc="${desc}\n\nSee: https://gist.github.com/Matan-B/3366024c130634942d0b1227112663e1 \n\n"
 
     debug "Generating backport PR title"
-    backport_pr_title="${milestone}: $(curl --silent https://api.github.com/repos/ceph/ceph/pulls/${original_pr} | jq -r '.title')"
+    backport_pr_title="${milestone}: $(curl -u ${github_user}:${github_token} --silent https://api.github.com/repos/ceph/ceph/pulls/${original_pr} | jq -r '.title')"
     if [[ "$backport_pr_title" =~ \" ]] ; then
         backport_pr_title="${backport_pr_title//\"/\\\"}"
     fi
