@@ -15,3 +15,6 @@ overrides:
   workunit:
     env:
       CRIMSON_COMPAT: '1'
+  ansible.cephlab:
+        repo: https://github.com/VallariAg/ceph-cm-ansible.git
+        branch: wip-remove-get_md5
