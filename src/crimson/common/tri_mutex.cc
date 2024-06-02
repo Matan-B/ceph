@@ -5,6 +5,8 @@
 
 #include <seastar/util/later.hh>
 
+SET_SUBSYS(osd);
+
 seastar::future<> read_lock::lock()
 {
   return static_cast<tri_mutex*>(this)->lock_for_read();
@@ -103,9 +105,12 @@ void tri_mutex::demote_to_read()
 
 seastar::future<> tri_mutex::lock_for_write()
 {
+  LOG_PREFIX(tri_mutex::lock_for_write());
   if (try_lock_for_write()) {
+    DEBUGDPP("locked for write", *this);
     return seastar::now();
   }
+  DEBUG("XXX2", "test");
   waiters.emplace_back(seastar::promise<>(), type_t::write);
   return waiters.back().pr.get_future();
 }
@@ -123,14 +128,17 @@ bool tri_mutex::try_lock_for_write() noexcept
 
 void tri_mutex::unlock_for_write()
 {
+  LOG_PREFIX(tri_mutex::unlock_for_write());
   assert(writers > 0);
   if (--writers == 0) {
     wake();
   }
+  DEBUG("XXX3");
 }
 
 void tri_mutex::promote_from_write()
 {
+  //LOG_PREFIX(tri_mutex::promote_from_write());
   assert(writers == 1);
   --writers;
   exclusively_used = true;
@@ -185,6 +193,7 @@ bool tri_mutex::is_acquired() const
 
 void tri_mutex::wake()
 {
+  LOG_PREFIX("tri_mutex::wake()");
   assert(!readers && !writers && !exclusively_used);
   type_t type = type_t::none;
   while (!waiters.empty()) {
@@ -210,6 +219,7 @@ void tri_mutex::wake()
     default:
       assert(0);
     }
+    DEBUG("XXX4", "test");
     waiter.pr.set_value();
     waiters.pop_front();
   }

@@ -63,7 +63,7 @@ ClientRequest::~ClientRequest()
 
 void ClientRequest::print(std::ostream &lhs) const
 {
-  lhs << "m=[" << *m << "]";
+  lhs << "xxx" << Operation::get_id() << "m=[" << *m << "]";
 }
 
 void ClientRequest::dump_detail(Formatter *f) const
@@ -304,6 +304,7 @@ ClientRequest::process_op(
         crimson::ct_error::assert_all("unexpected error")
       );
       // see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=98401
+      DEBUGDPP("XXX {} {}", *pg, *this, m->get_hobj());
       co_await std::move(with_obc);
     }
   }
