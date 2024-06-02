@@ -8,7 +8,7 @@ overrides:
       mon:
         osd pool default crimson: true
       osd:
-        crimson osd obc lru size: 10
+        crimson osd obc lru size: 512
       mgr:
         mgr stats period: 30
     flavor: crimson
