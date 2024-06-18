@@ -1539,7 +1539,7 @@ info "milestone/release is $milestone"
 debug "milestone number is $milestone_number"
 
 if [ "$CHERRY_PICK_PHASE" ] ; then
-    local_branch=wip-${original_pr}-${target_branch}
+    local_branch=wip-${original_pr}-${target_branch}-v2
     if git show-ref --verify --quiet "refs/heads/$local_branch" ; then
         if [ "$FORCE" ] ; then
             warning "local branch $local_branch already exists"
