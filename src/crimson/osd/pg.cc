@@ -1092,7 +1092,9 @@ PG::do_osd_ops_execute2(
       "do_osd_ops_execute: object {} - handling op {}",
       ox->get_target(),
       ceph_osd_op_name(osd_op.op.op));
-    return ox->execute_op(osd_op);
+    co_await ox->execute_op(osd_op);
+
+
   }, OpsExecuter::osd_op_errorator::all_same_way([] {
     co_return pg_rep_op_fut_t<Ret>(
       std::move(seastar::now()),
