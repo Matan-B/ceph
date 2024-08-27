@@ -672,6 +672,18 @@ private:
     std::vector<OSDOp>& ops,
     SuccessFunc&& success_func,
     FailureFunc&& failure_func);
+  template <class Ret, class SuccessFunc, class FailureFunc>
+  do_osd_ops_iertr::future<pg_rep_op_fut_t<Ret>> do_osd_ops_execute2(
+    seastar::lw_shared_ptr<OpsExecuter> ox,
+    ObjectContextRef obc,
+    const OpInfo &op_info,
+    Ref<MOSDOp> m,
+    std::vector<OSDOp>& ops,
+    SuccessFunc&& success_func,
+    FailureFunc&& failure_func);
+  const int 
+  do_osd_ops_execute_check_full(
+    seastar::lw_shared_ptr<OpsExecuter> ox);
   interruptible_future<MURef<MOSDOpReply>> do_pg_ops(Ref<MOSDOp> m);
   std::tuple<interruptible_future<>, interruptible_future<>>
   submit_transaction(
