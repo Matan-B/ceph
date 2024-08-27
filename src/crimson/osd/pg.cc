@@ -1068,6 +1068,42 @@ PG::do_osd_ops_execute(
   }));
 }
 
+template <class Ret, class SuccessFunc, class FailureFunc>
+PG::do_osd_ops_iertr::future<PG::pg_rep_op_fut_t<Ret>>
+PG::do_osd_ops_execute2(
+  seastar::lw_shared_ptr<OpsExecuter> ox,
+  ObjectContextRef obc,
+  const OpInfo &op_info,
+  Ref<MOSDOp> m,
+  std::vector<OSDOp>& ops,
+  SuccessFunc&& success_func,
+  FailureFunc&& failure_func)
+{
+  assert(ox);
+  auto rollbacker = ox->create_rollbacker([this] (auto& obc) {
+    return obc_loader.reload_obc(obc).handle_error_interruptible(
+      load_obc_ertr::assert_all{"can't live with object state messed up"});
+  });
+
+  auto failure_func_ptr = seastar::make_lw_shared(std::move(failure_func));
+
+  co_await interruptor::do_for_each(ops, [ox](OSDOp& osd_op) {
+    logger().debug(
+      "do_osd_ops_execute: object {} - handling op {}",
+      ox->get_target(),
+      ceph_osd_op_name(osd_op.op.op));
+    return ox->execute_op(osd_op);
+  }, OpsExecuter::osd_op_errorator::all_same_way([] {
+    co_return pg_rep_op_fut_t<Ret>(
+      std::move(seastar::now()),
+      OpsExecuter::osd_op_ierrorator::now());
+  }));
+  
+  co_return pg_rep_op_fut_t<Ret>(
+    std::move(seastar::now()),
+    OpsExecuter::osd_op_ierrorator::now());
+};
+
 seastar::future<> PG::complete_error_log(const ceph_tid_t& rep_tid,
                                          const eversion_t& version)
 {
