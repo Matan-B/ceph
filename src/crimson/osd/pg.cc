@@ -951,7 +951,7 @@ PG::do_osd_ops_execute(
       const auto& m = ox->get_message();
       if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
         m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
-        logger().info(" full, but proceeding due to FULL_FORCE or MDS");
+        logger().info(" full, but proceeding due to FULL_aFORCE or MDS");
       } else if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
         // they tried, they failed.
         logger().info(" full, replying to FULL_TRY op");
@@ -1096,42 +1096,52 @@ PG::do_osd_ops_execute2(
     co_await ox->execute_op(osd_op);
   });
 
-  auto submitted_fut = interruptor::now();
-  auto all_completed_fut =
-    OpsExecuter::osd_op_ierrorator::future<>(
-    crimson::ct_error::edquot::make());
-
   logger().debug(
     "do_osd_ops_execute: object {} all operations successful",
     ox->get_target());
+
   // check for full
+
+  // XXX change here to if hanle_full_error and return (able to return 0)
   if ((ox->delta_stats.num_bytes > 0 ||
     ox->delta_stats.num_objects > 0) &&
     get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL)) {
-    const auto& m = ox->get_message();
-    if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
-      m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
-      logger().info(" full, but proceeding due to FULL_FORCE or MDS");
-    } else if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
-      // they tried, they failed.
-      logger().info(" full, replying to FULL_TRY op");
-      if (get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA)) {
-        all_completed_fut =
-          OpsExecuter::osd_op_ierrorator::future<>(
-            crimson::ct_error::edquot::make());
-      } else {
-        all_completed_fut =
-          OpsExecuter::osd_op_ierrorator::future<>(
-            crimson::ct_error::enospc::make());
-      }
-    } else {
-      // drop request
-      logger().info(" full, dropping request (bad client)");
-      all_completed_fut =
-        OpsExecuter::osd_op_ierrorator::future<>(
-          crimson::ct_error::eagain::make());
-    }
+  
+    auto e = do_osd_ops_execute_check_full(ox);
+
+    auto all_completed_fut = 
+      rollbacker.rollback_obc_if_modified(e).then_interruptible(
+          [e, failure_func_ptr] {
+            // no need to record error log
+            return (*failure_func_ptr)(e);
+          });
+
+    co_return pg_rep_op_fut_t<Ret>(
+      std::move(seastar::now()),
+      all_completed_fut);
   }
+
+  auto [_submitted, _all_completed] =
+    co_await std::move(*ox).flush_changes_n_do_ops_effects(
+      ops,
+      snap_mapper,
+      osdriver,
+      std::bind(&PG::submit_transaction, this,
+                std::placeholders::_1, std::placeholders::_2,
+                std::placeholders::_3, std::placeholders::_4));
+
+  // _all_completed_fut to seperate func wiht success and corrupted
+
+  co_return pg_rep_op_fut_t<Ret>(
+    std::move(_submitted),
+    _all_completed).handle_error_interruptible(
+      // either handle error here or when awaiting for flush_changes_...
+      OpsExecuter::osd_op_errorator::all_same_way([] {
+        co_return pg_rep_op_fut_t<Ret>(
+          std::move(seastar::now()),
+          OpsExecuter::osd_op_ierrorator::now());
+      }));
+};
 
   /*
   co_return pg_rep_op_fut_t<Ret>(
@@ -1146,91 +1156,29 @@ PG::do_osd_ops_execute2(
 
   */
 
- auto [_submitted, _all_completed] =
-   co_await std::move(*ox).flush_changes_n_do_ops_effects(
-      ops,
-      snap_mapper,
-      osdriver,
-      std::bind(&PG::submit_transaction, this,
-                std::placeholders::_1, std::placeholders::_2,
-                std::placeholders::_3, std::placeholders::_4));
-
-co_return safe_then_unpack_interruptible(
-    [success_func=std::move(success_func), rollbacker, this, failure_func_ptr]
-    (auto submitted_fut, auto _all_completed_fut) mutable {
-
-    auto all_completed_fut = _all_completed_fut.safe_then_interruptible_tuple(
-      std::move(success_func),
-      crimson::ct_error::object_corrupted::handle(
-      [rollbacker, this] (const std::error_code& e) mutable {
-      // this is a path for EIO. it's special because we want to fix the obejct
-      // and try again. that is, the layer above `PG::do_osd_ops` is supposed to
-      // restart the execution.
-      return rollbacker.rollback_obc_if_modified(e).then_interruptible(
-      [obc=rollbacker.get_obc(), this] {
-        return repair_object(obc->obs.oi.soid,
-                             obc->obs.oi.version
-        ).then_interruptible([] {
-          return do_osd_ops_iertr::future<Ret>{crimson::ct_error::eagain::make()};
-        });
-      });
-    }), OpsExecuter::osd_op_errorator::all_same_way(
-        [rollbacker, failure_func_ptr]
-        (const std::error_code& e) mutable {
-          // handle non-fatal errors only
-          ceph_assert(e.value() == EDQUOT ||
-                      e.value() == ENOSPC ||
-                      e.value() == EAGAIN);
-          return rollbacker.rollback_obc_if_modified(e).then_interruptible(
-          [e, failure_func_ptr] {
-            // no need to record error log
-            return (*failure_func_ptr)(e);
-          });
-    }));
-
-    return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
-      std::move(submitted_fut),
-      std::move(all_completed_fut)
-    );
-  }, OpsExecuter::osd_op_errorator::all_same_way(
-    [this, op_info, m, obc,
-     rollbacker, failure_func_ptr]
-    (const std::error_code& e) mutable {
-    ceph_tid_t rep_tid = shard_services.get_tid();
-    return rollbacker.rollback_obc_if_modified(e).then_interruptible(
-    [&, op_info, m, obc,
-     this, e, rep_tid, failure_func_ptr] {
-      // record error log
-      auto maybe_submit_error_log =
-        seastar::make_ready_future<std::optional<eversion_t>>(std::nullopt);
-      // call submit_error_log only for non-internal clients
-      if constexpr (!std::is_same_v<Ret, void>) {
-        if(op_info.may_write()) {
-          maybe_submit_error_log =
-            submit_error_log(m, op_info, obc, e, rep_tid);
-        }
-      }
-      return maybe_submit_error_log.then(
-      [this, failure_func_ptr, e, rep_tid] (auto version) {
-        auto all_completed =
-        [this, failure_func_ptr, e, rep_tid,  version] {
-          if (version.has_value()) {
-            return complete_error_log(rep_tid, version.value()).then(
-            [failure_func_ptr, e] {
-              return (*failure_func_ptr)(e);
-            });
-          } else {
-            return (*failure_func_ptr)(e);
-          }
-        };
-        return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
-          std::move(seastar::now()),
-          std::move(all_completed())
-        );
-      });
-    });
-  }));
-};
+const int PG::do_osd_ops_execute_check_full(
+  seastar::lw_shared_ptr<OpsExecuter> ox)
+{
+  // TODO LOG_PREFIX(PG::do_osd_ops_execute_check_full);
+  const auto& m = ox->get_message();
+  if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
+    m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
+    logger().info(" full, but proceeding due to FULL_FORCE or MDS");
+  } else if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
+    // they tried, they failed.
+    logger().info(" full, replying to FULL_TRY op");
+    if (get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA)) {
+      return EDQUOT;
+    } else {
+      return ENOSPC;
+    }
+  } else {
+    // drop request
+    logger().info(" full, dropping request (bad client)");
+    return EAGAIN;
+  }
+  return 0;
+}
 
 seastar::future<> PG::complete_error_log(const ceph_tid_t& rep_tid,
                                          const eversion_t& version)
