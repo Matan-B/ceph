@@ -1121,10 +1121,39 @@ PG::do_osd_ops_execute2(
       std::bind(&PG::submit_transaction, this,
                 std::placeholders::_1, std::placeholders::_2,
                 std::placeholders::_3, std::placeholders::_4));
+
+    all_completed_fut = _all_completed.safe_then_interruptible_tuple(
+      std::move(success_func),
+      crimson::ct_error::object_corrupted::handle(
+      [rollbacker, this] (const std::error_code& e) mutable {
+      // this is a path for EIO. it's special because we want to fix the obejct
+      // and try again. that is, the layer above `PG::do_osd_ops` is supposed to
+      // restart the execution.
+      return rollbacker.rollback_obc_if_modified(e).then_interruptible(
+      [obc=rollbacker.get_obc(), this] {
+        return repair_object(obc->obs.oi.soid,
+                             obc->obs.oi.version
+        ).then_interruptible([] {
+          return do_osd_ops_iertr::future<Ret>{crimson::ct_error::eagain::make()};
+        });
+      });
+    }), OpsExecuter::osd_op_errorator::all_same_way(
+        [rollbacker, failure_func_ptr]
+        (const std::error_code& e) mutable {
+          // handle non-fatal errors only
+          ceph_assert(e.value() == EDQUOT ||
+                      e.value() == ENOSPC ||
+                      e.value() == EAGAIN);
+          return rollbacker.rollback_obc_if_modified(e).then_interruptible(
+          [e, failure_func_ptr] {
+            // no need to record error log
+            return (*failure_func_ptr)(e);
+          });
+    }));
   
   co_return pg_rep_op_fut_t<Ret>(
-    std::move(seastar::now()),
-    OpsExecuter::osd_op_ierrorator::now());
+      std::move(submitted_fut),
+      std::move(all_completed_fut));
 };
 
 seastar::future<> PG::complete_error_log(const ceph_tid_t& rep_tid,
