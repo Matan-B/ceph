@@ -1093,13 +1093,34 @@ PG::do_osd_ops_execute2(
       ox->get_target(),
       ceph_osd_op_name(osd_op.op.op));
     co_await ox->execute_op(osd_op);
+  });
 
+  auto submitted_fut = interruptor::now();
+  auto all_completed_fut =
+    OpsExecuter::osd_op_ierrorator::future<>(
+    crimson::ct_error::edquot::make());
 
-  }, OpsExecuter::osd_op_errorator::all_same_way([] {
+  /*
+  co_return pg_rep_op_fut_t<Ret>(
+    std::move(seastar::now()),
+    OpsExecuter::osd_op_ierrorator::now())
+
+  , OpsExecuter::osd_op_errorator::all_same_way([] {
     co_return pg_rep_op_fut_t<Ret>(
       std::move(seastar::now()),
       OpsExecuter::osd_op_ierrorator::now());
-  }));
+  });
+
+  */
+
+ auto [_submitted, _all_completed] =
+   co_await std::move(*ox).flush_changes_n_do_ops_effects(
+      ops,
+      snap_mapper,
+      osdriver,
+      std::bind(&PG::submit_transaction, this,
+                std::placeholders::_1, std::placeholders::_2,
+                std::placeholders::_3, std::placeholders::_4));
   
   co_return pg_rep_op_fut_t<Ret>(
     std::move(seastar::now()),
