@@ -1079,6 +1079,7 @@ PG::do_osd_ops_execute2(
   SuccessFunc&& success_func,
   FailureFunc&& failure_func)
 {
+  // TODO LOG_PREFIX(PG::do_osd_ops_execute);
   assert(ox);
   auto rollbacker = ox->create_rollbacker([this] (auto& obc) {
     return obc_loader.reload_obc(obc).handle_error_interruptible(
@@ -1099,6 +1100,38 @@ PG::do_osd_ops_execute2(
   auto all_completed_fut =
     OpsExecuter::osd_op_ierrorator::future<>(
     crimson::ct_error::edquot::make());
+
+  logger().debug(
+    "do_osd_ops_execute: object {} all operations successful",
+    ox->get_target());
+  // check for full
+  if ((ox->delta_stats.num_bytes > 0 ||
+    ox->delta_stats.num_objects > 0) &&
+    get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL)) {
+    const auto& m = ox->get_message();
+    if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
+      m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
+      logger().info(" full, but proceeding due to FULL_FORCE or MDS");
+    } else if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
+      // they tried, they failed.
+      logger().info(" full, replying to FULL_TRY op");
+      if (get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA)) {
+        all_completed_fut =
+          OpsExecuter::osd_op_ierrorator::future<>(
+            crimson::ct_error::edquot::make());
+      } else {
+        all_completed_fut =
+          OpsExecuter::osd_op_ierrorator::future<>(
+            crimson::ct_error::enospc::make());
+      }
+    } else {
+      // drop request
+      logger().info(" full, dropping request (bad client)");
+      all_completed_fut =
+        OpsExecuter::osd_op_ierrorator::future<>(
+          crimson::ct_error::eagain::make());
+    }
+  }
 
   /*
   co_return pg_rep_op_fut_t<Ret>(
@@ -1122,7 +1155,11 @@ PG::do_osd_ops_execute2(
                 std::placeholders::_1, std::placeholders::_2,
                 std::placeholders::_3, std::placeholders::_4));
 
-    all_completed_fut = _all_completed.safe_then_interruptible_tuple(
+co_return safe_then_unpack_interruptible(
+    [success_func=std::move(success_func), rollbacker, this, failure_func_ptr]
+    (auto submitted_fut, auto _all_completed_fut) mutable {
+
+    auto all_completed_fut = _all_completed_fut.safe_then_interruptible_tuple(
       std::move(success_func),
       crimson::ct_error::object_corrupted::handle(
       [rollbacker, this] (const std::error_code& e) mutable {
@@ -1150,10 +1187,49 @@ PG::do_osd_ops_execute2(
             return (*failure_func_ptr)(e);
           });
     }));
-  
-  co_return pg_rep_op_fut_t<Ret>(
+
+    return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
       std::move(submitted_fut),
-      std::move(all_completed_fut));
+      std::move(all_completed_fut)
+    );
+  }, OpsExecuter::osd_op_errorator::all_same_way(
+    [this, op_info, m, obc,
+     rollbacker, failure_func_ptr]
+    (const std::error_code& e) mutable {
+    ceph_tid_t rep_tid = shard_services.get_tid();
+    return rollbacker.rollback_obc_if_modified(e).then_interruptible(
+    [&, op_info, m, obc,
+     this, e, rep_tid, failure_func_ptr] {
+      // record error log
+      auto maybe_submit_error_log =
+        seastar::make_ready_future<std::optional<eversion_t>>(std::nullopt);
+      // call submit_error_log only for non-internal clients
+      if constexpr (!std::is_same_v<Ret, void>) {
+        if(op_info.may_write()) {
+          maybe_submit_error_log =
+            submit_error_log(m, op_info, obc, e, rep_tid);
+        }
+      }
+      return maybe_submit_error_log.then(
+      [this, failure_func_ptr, e, rep_tid] (auto version) {
+        auto all_completed =
+        [this, failure_func_ptr, e, rep_tid,  version] {
+          if (version.has_value()) {
+            return complete_error_log(rep_tid, version.value()).then(
+            [failure_func_ptr, e] {
+              return (*failure_func_ptr)(e);
+            });
+          } else {
+            return (*failure_func_ptr)(e);
+          }
+        };
+        return PG::do_osd_ops_iertr::make_ready_future<pg_rep_op_fut_t<Ret>>(
+          std::move(seastar::now()),
+          std::move(all_completed())
+        );
+      });
+    });
+  }));
 };
 
 seastar::future<> PG::complete_error_log(const ceph_tid_t& rep_tid,
