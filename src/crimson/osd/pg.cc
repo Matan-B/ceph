@@ -917,6 +917,43 @@ PG::BackgroundProcessLock::lock() noexcept
   return interruptor::make_interruptible(mutex.lock());
 }
 
+OpsExecuter::osd_op_ierrorator::future<>
+PG::handle_flag_full(seastar::lw_shared_ptr<OpsExecuter> ox)
+{
+  const auto& m = ox->get_message();
+  if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
+    // they tried, they failed.
+    logger().info(" full, replying to FULL_TRY op");
+    if (get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA)) {
+      return crimson::ct_error::edquot::make();
+    } else {
+      return crimson::ct_error::enospc::make();
+    }
+  } else {
+    // drop request
+    logger().info(" full, dropping request (bad client)");
+    return crimson::ct_error::eagain::make();
+  }
+}
+
+bool PG::should_handle_flag_full(seastar::lw_shared_ptr<OpsExecuter> ox)
+{
+  if (const auto& m = ox->get_message();
+      (ox->delta_stats.num_bytes > 0 ||
+      ox->delta_stats.num_objects > 0) &&
+      get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL)) {
+    if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
+        m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
+      logger().info(" full, but proceeding due to FULL_FORCE or MDS");
+      return false;
+    } else {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 template <class Ret, class SuccessFunc, class FailureFunc>
 PG::do_osd_ops_iertr::future<PG::pg_rep_op_fut_t<Ret>>
 PG::do_osd_ops_execute(
@@ -944,37 +981,15 @@ PG::do_osd_ops_execute(
     logger().debug(
       "do_osd_ops_execute: object {} all operations successful",
       ox->get_target());
-    // check for full
-    if ((ox->delta_stats.num_bytes > 0 ||
-      ox->delta_stats.num_objects > 0) &&
-      get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL)) {
-      const auto& m = ox->get_message();
-      if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
-        m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
-        logger().info(" full, but proceeding due to FULL_FORCE or MDS");
-      } else if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
-        // they tried, they failed.
-        logger().info(" full, replying to FULL_TRY op");
-        if (get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA))
-          return interruptor::make_ready_future<OpsExecuter::rep_op_fut_tuple>(
-            seastar::now(),
-            OpsExecuter::osd_op_ierrorator::future<>(
-              crimson::ct_error::edquot::make()));
-        else
-          return interruptor::make_ready_future<OpsExecuter::rep_op_fut_tuple>(
-            seastar::now(),
-            OpsExecuter::osd_op_ierrorator::future<>(
-              crimson::ct_error::enospc::make()));
-      } else {
-        // drop request
-        logger().info(" full, dropping request (bad client)");
-        return interruptor::make_ready_future<OpsExecuter::rep_op_fut_tuple>(
-          seastar::now(),
-          OpsExecuter::osd_op_ierrorator::future<>(
-            crimson::ct_error::eagain::make()));
-      }
-    }
-    return std::move(*ox).flush_changes_n_do_ops_effects(
+
+    // temporary, incremental diff
+    if (should_handle_flag_full(ox)) {
+      auto all_completed = handle_flag_full(ox);
+      return interruptor::make_ready_future<OpsExecuter::rep_op_fut_tuple>(
+        std::move(seastar::now()),
+        std::move(all_completed));
+    } else {
+      return std::move(*ox).flush_changes_n_do_ops_effects(
       ops,
       snap_mapper,
       osdriver,
@@ -982,15 +997,16 @@ PG::do_osd_ops_execute(
               auto&& obc,
               auto&& osd_op_p,
               auto&& log_entries) {
-	logger().debug(
-	  "do_osd_ops_execute: object {} submitting txn",
-	  obc->get_oid());
-	return submit_transaction(
-          std::move(obc),
-          std::move(txn),
-          std::move(osd_op_p),
-          std::move(log_entries));
-    });
+              logger().debug(
+              "do_osd_ops_execute: object {} submitting txn",
+              obc->get_oid());
+              return submit_transaction(
+              std::move(obc),
+              std::move(txn),
+              std::move(osd_op_p),
+              std::move(log_entries));
+      });
+    }
   }).safe_then_unpack_interruptible(
     [success_func=std::move(success_func), rollbacker, this, failure_func_ptr]
     (auto submitted_fut, auto _all_completed_fut) mutable {

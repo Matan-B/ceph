@@ -663,6 +663,9 @@ private:
     std::vector<OSDOp>& ops,
     const OpInfo &op_info,
     const do_osd_ops_params_t &&params);
+  OpsExecuter::osd_op_ierrorator::future<>
+    handle_flag_full(seastar::lw_shared_ptr<OpsExecuter> ox);
+  bool should_handle_flag_full(seastar::lw_shared_ptr<OpsExecuter> ox);
   template <class Ret, class SuccessFunc, class FailureFunc>
   do_osd_ops_iertr::future<pg_rep_op_fut_t<Ret>> do_osd_ops_execute(
     seastar::lw_shared_ptr<OpsExecuter> ox,
