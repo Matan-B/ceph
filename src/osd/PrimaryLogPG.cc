@@ -8535,6 +8535,10 @@ void PrimaryLogPG::_do_rollback_to(OpContext *ctx, ObjectContextRef rollback_to,
     new_last_overlap.intersection_of(iter->second);
   }
 
+  // The head will be re-written, adjust the newest
+  // clone overlap (with the rollback target) accordingly
+  last_clone_overlap_iter->second = new_last_overlap;
+
   if (obs.oi.size > 0) {
     interval_set<uint64_t> modified;
     modified.insert(0, obs.oi.size);
