@@ -8546,7 +8546,7 @@ void PrimaryLogPG::_do_rollback_to(OpContext *ctx, ObjectContextRef rollback_to,
     modified.insert(0, rollback_to->obs.oi.size);
     new_last_overlap.intersection_of(modified);
     modified.subtract(new_last_overlap);
-    ctx->modified_ranges.union_of(modified);
+    ctx->delta_stats.num_bytes += modified.size();
   }
 
   // Adjust the cached objectcontext
@@ -8757,6 +8757,10 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
     ctx->modified_ranges.intersection_of(newest_overlap);
     if (is_present_clone(last_clone_oid)) {
       // modified_ranges is still in use by the clone
+      // WIP: the last commit will break this as modified_ranges will always be
+      // empty in rollbacks after modified_ranges intersection_of(newest_overlap)
+      // should we introduce rollback_modified_ranges?
+      // Or we can add the num_bytes when when rolling back
       ctx->delta_stats.num_bytes += ctx->modified_ranges.size();
     }
     newest_overlap.subtract(ctx->modified_ranges);
