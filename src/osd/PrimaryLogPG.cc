@@ -8539,9 +8539,11 @@ void PrimaryLogPG::_do_rollback_to(OpContext *ctx, ObjectContextRef rollback_to,
   // clone overlap (with the rollback target) accordingly
   last_clone_overlap_iter->second = new_last_overlap;
 
-  if (obs.oi.size > 0) {
+  // Calculate what is modified between the
+  // rollback target and the newest clone
+  if (rollback_to->obs.oi.size > 0) {
     interval_set<uint64_t> modified;
-    modified.insert(0, obs.oi.size);
+    modified.insert(0, rollback_to->obs.oi.size);
     new_last_overlap.intersection_of(modified);
     modified.subtract(new_last_overlap);
     ctx->modified_ranges.union_of(modified);
