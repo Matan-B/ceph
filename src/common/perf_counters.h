@@ -293,7 +293,7 @@ private:
 
   int prio_adjust = 0;
 
-#if !defined(WITH_SEASTAR) || defined(WITH_ALIEN)
+#if !defined(WITH_CRIMSON)
   const std::string m_lock_name;
   /** Protects m_data */
   ceph::mutex m_lock;

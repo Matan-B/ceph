@@ -20,6 +20,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << name << " "
 
+#ifndef WITH_CRIMSON
+
 ThreadPool::ThreadPool(CephContext *cct_, std::string nm, std::string tn, int n, const char *option)
   : cct(cct_), name(std::move(nm)), thread_name(std::move(tn)),
     lockname(name + "::lock"),
@@ -409,3 +411,5 @@ void ShardedThreadPool::drain()
   shardedpool_cond.notify_all();
   ldout(cct,10) << "drained" << dendl;
 }
+
+#endif

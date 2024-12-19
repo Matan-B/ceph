@@ -15,7 +15,7 @@
 #include "common/ThrottleInterface.h"
 #include "common/Timer.h"
 #include "common/convenience.h"
-#if defined(WITH_SEASTAR) && !defined(WITH_ALIEN)
+#if defined(WITH_CRIMSON)
 #include "crimson/common/perf_counters_collection.h"
 #else
 #include "common/perf_counters_collection.h"
