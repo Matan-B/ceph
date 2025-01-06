@@ -137,6 +137,9 @@ inline std::ostream& operator<<(std::ostream& os, const tri_mutex& tm)
                     " exclusively_used {} waiters: {}",
                     tm.get_name(), tm.get_writers(), tm.get_readers(),
                     tm.exclusively_used, tm.waiters.size());
+#ifndef NDEBUG
+  os << " address " << &tm;
+#endif
   return os;
 }
 
