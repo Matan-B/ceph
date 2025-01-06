@@ -1079,12 +1079,7 @@ PG::run_executer_fut PG::run_executer(
   LOG_PREFIX(PG::run_executer);
   auto rollbacker = ox.create_rollbacker(
     [obc_data = duplicate_obc_data(obc)](auto &obc) mutable {
-      auto os = obc_data.first;
-      auto ssc = obc_data.second;
-      ObjectContextRef stored_obc = new ObjectContext(os.oi.soid);
-      stored_obc->obs = os;
-      stored_obc->ssc = ssc;
-      obc->update_from(*stored_obc);
+      obc->update_from(obc_data);
     });
   auto rollback_on_error = seastar::defer([&rollbacker] {
     rollbacker.rollback_obc_if_modified();
