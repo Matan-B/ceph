@@ -7375,8 +7375,26 @@ void OSD::scrub_purged_snaps()
     PGRef pg = lookup_lock_pg(spgid);
     if (!pg) {
       dout(20) << __func__ << " pg " << spgid << " not found" << dendl;
+      // Case 1: No pg to whom the stray object might belong.
+      //         Remove the object?
+      // Assumption: object exist in an osd without a spg_t can be removed
       continue;
     }
+    // Case 2: Make sure that the stray clone object found actually
+    //         matches the previously belonged pg mask_bits.
+    //         The object may have been belonged to this pg but now
+    //         our mask bits changed (due to split/merge).
+    //         a) remove this object (osd level?)
+    //         b) redirect to the actual existing pg (with the new mask bits)?
+    //         c) let this pg remove this stray object by relaxing prefix checks
+
+    /*
+    hobject_t stray_obj;  //tmp
+    if (!pg->check_snap_mapper(stray_obj)) {
+      // this object doesn't match this snapmapper bits.
+    }
+    */
+
     queued.insert(p);
     dout(10) << __func__ << " requeue pg " << spgid << " " << pg << " snap "
 	     << snap << dendl;

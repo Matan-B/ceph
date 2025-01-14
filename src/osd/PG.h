@@ -398,6 +398,11 @@ public:
   void update_snap_mapper_bits(uint32_t bits) {
     snap_mapper.update_bits(bits);
   }
+
+  void check_snap_mapper_bits(uint32_t bits) {
+    snap_mapper.update_bits(bits);
+  }
+
   void start_split_stats(const std::set<spg_t>& childpgs, std::vector<object_stat_sum_t> *v);
   virtual void split_colls(
     spg_t child,
