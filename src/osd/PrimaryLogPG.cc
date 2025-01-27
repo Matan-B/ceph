@@ -13976,7 +13976,6 @@ uint64_t PrimaryLogPG::recover_backfill(
       hobject_t next = backfill_info.end;
       backfill_info = BackfillInterval(next, hobject_t::get_max());
       update_range(&backfill_info, handle);
-      backfill_info.trim();
     }
 
     dout(20) << "   my backfill interval " << backfill_info << dendl;
