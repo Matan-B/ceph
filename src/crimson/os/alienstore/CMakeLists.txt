@@ -1,10 +1,5 @@
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/src/rocksdb/include")
 
-add_library(alien::cflags INTERFACE IMPORTED)
-set_target_properties(alien::cflags PROPERTIES
-  INTERFACE_COMPILE_DEFINITIONS ""
-  INTERFACE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:Seastar::seastar,INTERFACE_INCLUDE_DIRECTORIES>)
-
 set(crimson_alien_common_srcs
   ${PROJECT_SOURCE_DIR}/src/common/admin_socket.cc
   ${PROJECT_SOURCE_DIR}/src/common/url_escape.cc
@@ -69,14 +64,14 @@ add_library(crimson-alienstore STATIC
 if(WITH_LTTNG)
   add_dependencies(crimson-alienstore bluestore-tp)
 endif()
+target_include_directories(crimson-alienstore INTERFACE
+  $<TARGET_PROPERTY:Seastar::seastar,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(crimson-alienstore
-  PRIVATE
-    alien::cflags
-    ${FMT_LIB}
-    kv
-    heap_profiler
-    crimson-alien-common
-    ${BLKID_LIBRARIES}
-    ${UDEV_LIBRARIES}
-    seastar
-    blk)
+  ${FMT_LIB}
+  kv
+  heap_profiler
+  crimson-alien-common
+  ${BLKID_LIBRARIES}
+  ${UDEV_LIBRARIES}
+  seastar
+  blk)
