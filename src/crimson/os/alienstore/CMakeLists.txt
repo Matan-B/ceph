@@ -40,7 +40,10 @@ add_library(crimson-alien-common STATIC
 
 target_link_libraries(crimson-alien-common)
 
-set(bluestore_srcs
+set(alien_store_srcs
+  alien_store.cc
+  thread_pool.cc
+  alien_log.cc
   ${PROJECT_SOURCE_DIR}/src/os/ObjectStore.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/Allocator.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/AvlAllocator.cc
@@ -61,29 +64,17 @@ set(bluestore_srcs
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/Writer.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/BlueStore_debug.cc
   ${PROJECT_SOURCE_DIR}/src/os/memstore/MemStore.cc)
-
-add_library(crimson-bluestore STATIC
-  ${bluestore_srcs})
-
-if(WITH_LTTNG)
-  add_dependencies(crimson-bluestore bluestore-tp)
-endif()
-
-set(alien_store_srcs
-  alien_store.cc
-  thread_pool.cc
-  alien_log.cc)
-
 add_library(crimson-alienstore STATIC
   ${alien_store_srcs})
-
+if(WITH_LTTNG)
+  add_dependencies(crimson-alienstore bluestore-tp)
+endif()
 target_link_libraries(crimson-alienstore
   PRIVATE
     alien::cflags
     ${FMT_LIB}
     kv
     heap_profiler
-    crimson-bluestore
     crimson-alien-common
     ${BLKID_LIBRARIES}
     ${UDEV_LIBRARIES}
