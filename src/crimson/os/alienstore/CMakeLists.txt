@@ -38,9 +38,7 @@ endif()
 add_library(crimson-alien-common STATIC
   ${crimson_alien_common_srcs})
 
-target_link_libraries(crimson-alien-common
-  crimson-common
-  alien::cflags)
+target_link_libraries(crimson-alien-common)
 
 set(alien_store_srcs
   alien_store.cc
