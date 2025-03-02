@@ -8,6 +8,7 @@
 #include "crimson/common/log.h"
 #include "crimson/net/Connection.h"
 #include "crimson/net/Messenger.h"
+#include "crimson/common/coroutine.h"
 #include "messages/MMgrConfigure.h"
 #include "messages/MMgrMap.h"
 #include "messages/MMgrOpen.h"
@@ -35,7 +36,7 @@ seastar::future<> Client::start()
 {
   LOG_PREFIX(Client::start);
   DEBUGDPP("", *this);
-  return seastar::now();
+  co_return;
 }
 
 seastar::future<> Client::stop()
@@ -43,12 +44,11 @@ seastar::future<> Client::stop()
   LOG_PREFIX(Client::stop);
   DEBUGDPP("", *this);
   report_timer.cancel();
-  auto fut = gates.close_all();
   if (conn) {
     DEBUGDPP("marking down", *this);
     conn->mark_down();
   }
-  return fut;
+  co_await gates.close_all();
 }
 
 std::optional<seastar::future<>>
@@ -58,16 +58,15 @@ Client::ms_dispatch(crimson::net::ConnectionRef conn, MessageRef m)
   DEBUGDPP("{}", *this, *m);
   bool dispatched = true;
   gates.dispatch_in_background(__func__, *this,
-  [this, conn, &m, &dispatched, FNAME] {
+  [this, conn, &m, &dispatched, FNAME]() -> seastar::future<> {
     DEBUGDPP("dispatching in background {}", *this, *m);
     switch(m->get_type()) {
     case MSG_MGR_MAP:
-      return handle_mgr_map(conn, boost::static_pointer_cast<MMgrMap>(m));
+      co_await handle_mgr_map(conn, boost::static_pointer_cast<MMgrMap>(m));
     case MSG_MGR_CONFIGURE:
-      return handle_mgr_conf(conn, boost::static_pointer_cast<MMgrConfigure>(m));
+      co_await handle_mgr_conf(conn, boost::static_pointer_cast<MMgrConfigure>(m));
     default:
       dispatched = false;
-      return seastar::now();
     }
   });
   return (dispatched ? std::make_optional(seastar::now()) : std::nullopt);
@@ -81,7 +80,7 @@ void Client::ms_handle_connect(
   DEBUGDPP("prev_shard: {}", *this, prv_shard);
   ceph_assert_always(prv_shard == seastar::this_shard_id());
   gates.dispatch_in_background(__func__, *this,
-  [this, c, FNAME] {
+  [this, c, FNAME]() -> seastar::future<> {
     if (conn == c) {
       DEBUGDPP("dispatching in background", *this);
       // ask for the mgrconfigure message
@@ -89,10 +88,9 @@ void Client::ms_handle_connect(
       m->daemon_name = local_conf()->name.get_id();
       local_conf().get_config_bl(0, &m->config_bl, &last_config_bl_version);
       local_conf().get_defaults_bl(&m->config_defaults_bl);
-      return conn->send(std::move(m));
+      co_await conn->send(std::move(m));
     } else {
       DEBUGDPP("connection changed", *this);
-      return seastar::now();
     }
   });
 }
@@ -102,13 +100,11 @@ void Client::ms_handle_reset(crimson::net::ConnectionRef c, bool /* is_replace *
   LOG_PREFIX(Client::ms_handle_reset);
   DEBUGDPP("", *this);
   gates.dispatch_in_background(__func__, *this,
-  [this, c, FNAME] {
+  [this, c, FNAME]() -> seastar::future<> {
     DEBUGDPP("dispatching in background", *this);
     if (conn == c) {
       report_timer.cancel();
-      return reconnect();
-    } else {
-      return seastar::now();
+      co_await reconnect();
     }
   });
 }
@@ -124,24 +120,24 @@ seastar::future<> Client::reconnect()
   }
   if (!mgrmap.get_available()) {
     WARNDPP("No active mgr available yet", *this);
-    return seastar::now();
+    co_return;
   }
   auto retry_interval = std::chrono::duration<double>(
     local_conf().get_val<double>("mgr_connect_retry_interval"));
   auto a_while = std::chrono::duration_cast<seastar::steady_clock_type::duration>(
     retry_interval);
   DEBUGDPP("reconnecting in {} seconds", *this, retry_interval);
-  return seastar::sleep(a_while).then([this, FNAME] {
-    auto peer = mgrmap.get_active_addrs().pick_addr(msgr.get_myaddr().get_type());
-    if (peer == entity_addr_t{}) {
-      // crimson msgr only uses the first bound addr
-      ERRORDPP("mgr.{} does not have an addr compatible with me",
-               *this, mgrmap.get_active_name());
-      return;
-    }
-    conn = msgr.connect(peer, CEPH_ENTITY_TYPE_MGR);
-    DEBUGDPP("reconnected successfully", *this);
-  });
+  co_await seastar::sleep(a_while);
+
+  auto peer = mgrmap.get_active_addrs().pick_addr(msgr.get_myaddr().get_type());
+  if (peer == entity_addr_t{}) {
+    // crimson msgr only uses the first bound addr
+    ERRORDPP("mgr.{} does not have an addr compatible with me",
+             *this, mgrmap.get_active_name());
+    co_return;
+  }
+  conn = msgr.connect(peer, CEPH_ENTITY_TYPE_MGR);
+  DEBUGDPP("reconnected successfully", *this);
 }
 
 seastar::future<> Client::handle_mgr_map(crimson::net::ConnectionRef,
@@ -151,12 +147,10 @@ seastar::future<> Client::handle_mgr_map(crimson::net::ConnectionRef,
   DEBUGDPP("", *this);
   mgrmap = m->get_map();
   if (!conn) {
-    return reconnect();
+    co_await reconnect();
   } else if (conn->get_peer_addr() !=
              mgrmap.get_active_addrs().legacy_addr()) {
-    return reconnect();
-  } else {
-    return seastar::now();
+    co_await reconnect();
   }
 }
 
@@ -178,9 +172,8 @@ seastar::future<> Client::handle_mgr_conf(crimson::net::ConnectionRef,
   }
   if (!m->osd_perf_metric_queries.empty()) {
     ceph_assert(set_perf_queries_cb);
-    return set_perf_queries_cb(m->osd_perf_metric_queries);
+    co_await set_perf_queries_cb(m->osd_perf_metric_queries);
   }
-  return seastar::now();
 }
 
 void Client::report()
@@ -188,20 +181,19 @@ void Client::report()
   LOG_PREFIX(Client::report);
   DEBUGDPP("", *this);
   _send_report();
-  gates.dispatch_in_background(__func__, *this, [this, FNAME] {
-  DEBUGDPP("dispatching in background", *this);
+  gates.dispatch_in_background(__func__, *this,
+  [this, FNAME]() -> seastar::future<> {
+    DEBUGDPP("dispatching in background", *this);
     if (!conn) {
       WARNDPP("no conn available; report skipped", *this);
-      return seastar::now();
+      co_return;
     }
-    return with_stats.get_stats(
-    ).then([this, FNAME](auto &&pg_stats) {
-      if (!conn) {
-        WARNDPP("no conn available; before sending stats, report skipped", *this);
-        return seastar::now();
-      }
-      return conn->send(std::move(pg_stats));
-    });
+    auto &&pg_stats = co_await with_stats.get_stats();
+    if (!conn) {
+       WARNDPP("no conn available; before sending stats, report skipped", *this);
+      co_return;
+    }
+    co_await conn->send(std::move(pg_stats));
   });
 }
 
@@ -214,11 +206,12 @@ void Client::_send_report()
 {
   LOG_PREFIX(Client::_send_report);
   DEBUGDPP("", *this);
-  gates.dispatch_in_background(__func__, *this, [this, FNAME] {
-  DEBUGDPP("dispatching in background", *this);
+  gates.dispatch_in_background(__func__, *this,
+  [this, FNAME]() -> seastar::future<> {
+    DEBUGDPP("dispatching in background", *this);
     if (!conn) {
       WARNDPP("cannot send report; no conn available", *this);
-      return seastar::now();
+      co_return;
     }
     auto report = make_message<MMgrReport>();
     // Adding empty information since we don't support perfcounters yet
@@ -237,13 +230,10 @@ void Client::_send_report()
     local_conf().get_config_bl(last_config_bl_version, &report->config_bl,
 	                      &last_config_bl_version);
     if (get_perf_report_cb) {
-      return get_perf_report_cb(
-      ).then([report=std::move(report), this](auto payload) mutable {
-	report->metric_report_message = MetricReportMessage(std::move(payload));
-	return conn->send(std::move(report));
-      });
+      auto payload = co_await get_perf_report_cb();
+      report->metric_report_message = MetricReportMessage(std::move(payload));
     }
-    return conn->send(std::move(report));
+    co_await conn->send(std::move(report));
   });
 }
 
