@@ -64,25 +64,31 @@ seastar::future<> Client::send(MessageURef msg)
   }
 }
 
+seastar::future<> Client::_ms_dispatch(crimson::net::ConnectionRef conn,
+                                       MessageRef m) {
+  LOG_PREFIX(Client::ms_dispatch);
+  DEBUGDPP("dispatching in background {}", *this, *m);
+  switch(m->get_type()) {
+  case MSG_MGR_MAP:
+    co_await handle_mgr_map(conn, boost::static_pointer_cast<MMgrMap>(m));
+  case MSG_MGR_CONFIGURE:
+    co_await handle_mgr_conf(conn, boost::static_pointer_cast<MMgrConfigure>(m));
+  default:
+    dispatched = false;
+  }
+}
+
 std::optional<seastar::future<>>
 Client::ms_dispatch(crimson::net::ConnectionRef conn, MessageRef m)
 {
   LOG_PREFIX(Client::ms_dispatch);
   DEBUGDPP("{}", *this, *m);
   bool dispatched = true;
-  gates.dispatch_in_background(__func__, *this,
-  [this, conn, &m, &dispatched, FNAME]() -> seastar::future<> {
-    DEBUGDPP("dispatching in background {}", *this, *m);
-    switch(m->get_type()) {
-    case MSG_MGR_MAP:
-      co_await handle_mgr_map(conn, boost::static_pointer_cast<MMgrMap>(m));
-    case MSG_MGR_CONFIGURE:
-      co_await handle_mgr_conf(conn, boost::static_pointer_cast<MMgrConfigure>(m));
-    default:
-      dispatched = false;
-    }
-  });
-  return (dispatched ? std::make_optional(seastar::now()) : std::nullopt);
+  if (m->get_type() != MSG_MGR_MAP || m->get_type() != MSG_MGR_CONFIGURE) {
+    retun std::nullopt;
+  }
+  gates.dispatch_in_background(__func__, *this, _ms_dispatch(conn, m));
+  return std::make_optional(seastar::now());
 }
 
 void Client::ms_handle_connect(
