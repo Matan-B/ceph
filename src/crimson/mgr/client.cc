@@ -4,6 +4,7 @@
 #include "client.h"
 
 #include <seastar/core/sleep.hh>
+#include <seastar/util/defer.hh>
 
 #include "crimson/common/log.h"
 #include "crimson/net/Connection.h"
@@ -76,19 +77,18 @@ Client::ms_dispatch(crimson::net::ConnectionRef conn, MessageRef m)
   LOG_PREFIX(Client::ms_dispatch);
   DEBUGDPP("{}", *this, *m);
   bool dispatched = true;
-  gates.dispatch_in_background(__func__, *this,
-  [this, conn, &m, &dispatched, FNAME] {
+  gates.dispatch_in_background(__func__, *this, seastar::yield().then(seastar::coroutine::lambda(
+  [this, conn, &m, &dispatched, FNAME]() -> seastar::future<> {
     DEBUGDPP("dispatching in background {}", *this, *m);
     switch(m->get_type()) {
     case MSG_MGR_MAP:
-      return handle_mgr_map(conn, boost::static_pointer_cast<MMgrMap>(m));
+      co_await handle_mgr_map(conn, boost::static_pointer_cast<MMgrMap>(m));
     case MSG_MGR_CONFIGURE:
-      return handle_mgr_conf(conn, boost::static_pointer_cast<MMgrConfigure>(m));
+      co_await handle_mgr_conf(conn, boost::static_pointer_cast<MMgrConfigure>(m));
     default:
       dispatched = false;
-      return seastar::now();
     }
-  });
+  })));
   return (dispatched ? std::make_optional(seastar::now()) : std::nullopt);
 }
 
@@ -99,8 +99,8 @@ void Client::ms_handle_connect(
   LOG_PREFIX(Client::ms_handle_connect);
   DEBUGDPP("prev_shard: {}", *this, prv_shard);
   ceph_assert_always(prv_shard == seastar::this_shard_id());
-  gates.dispatch_in_background(__func__, *this,
-  [this, c, FNAME] {
+  gates.dispatch_in_background(__func__, *this, seastar::yield().then(seastar::coroutine::lambda(
+  [this, c, FNAME]() -> seastar::future<> {
     if (conn == c) {
       DEBUGDPP("dispatching in background", *this);
       // ask for the mgrconfigure message
@@ -108,28 +108,25 @@ void Client::ms_handle_connect(
       m->daemon_name = local_conf()->name.get_id();
       local_conf().get_config_bl(0, &m->config_bl, &last_config_bl_version);
       local_conf().get_defaults_bl(&m->config_defaults_bl);
-      return send(std::move(m));
+      co_await send(std::move(m));
     } else {
       DEBUGDPP("connection changed", *this);
-      return seastar::now();
     }
-  });
+  })));
 }
 
 void Client::ms_handle_reset(crimson::net::ConnectionRef c, bool /* is_replace */)
 {
   LOG_PREFIX(Client::ms_handle_reset);
   DEBUGDPP("", *this);
-  gates.dispatch_in_background(__func__, *this,
-  [this, c, FNAME] {
+  gates.dispatch_in_background(__func__, *this, seastar::yield().then(seastar::coroutine::lambda(
+  [this, c, FNAME]() -> seastar::future<> {
     DEBUGDPP("dispatching in background", *this);
     if (conn == c) {
       report_timer.cancel();
-      return reconnect();
-    } else {
-      return seastar::now();
+      co_await reconnect();
     }
-  });
+  })));
 }
 
 seastar::future<> Client::retry_interval()
@@ -212,13 +209,12 @@ void Client::report()
   LOG_PREFIX(Client::report);
   DEBUGDPP("", *this);
   _send_report();
-  gates.dispatch_in_background(__func__, *this, [this, FNAME] {
+  gates.dispatch_in_background(__func__, *this, seastar::yield().then(seastar::coroutine::lambda(
+  [this, FNAME]() -> seastar::future<> {
     DEBUGDPP("dispatching in background", *this);
-    return with_stats.get_stats(
-    ).then([this](auto &&pg_stats) {
-      return send(std::move(pg_stats));
-    });
-  });
+    auto &&pg_stats = co_await with_stats.get_stats();
+    co_await send(std::move(pg_stats));
+  })));
 }
 
 void Client::update_daemon_health(std::vector<DaemonHealthMetric>&& metrics)
@@ -230,7 +226,8 @@ void Client::_send_report()
 {
   LOG_PREFIX(Client::_send_report);
   DEBUGDPP("", *this);
-  gates.dispatch_in_background(__func__, *this, [this, FNAME] {
+  gates.dispatch_in_background(__func__, *this, seastar::yield().then(seastar::coroutine::lambda(
+  [this, FNAME]() -> seastar::future<> {
     DEBUGDPP("dispatching in background", *this);
     auto report = make_message<MMgrReport>();
     // Adding empty information since we don't support perfcounters yet
@@ -249,14 +246,11 @@ void Client::_send_report()
     local_conf().get_config_bl(last_config_bl_version, &report->config_bl,
 	                      &last_config_bl_version);
     if (get_perf_report_cb) {
-      return get_perf_report_cb(
-      ).then([report=std::move(report), this](auto payload) mutable {
-	report->metric_report_message = MetricReportMessage(std::move(payload));
-	return send(std::move(report));
-      });
+      auto payload = co_await get_perf_report_cb();
+      report->metric_report_message = MetricReportMessage(std::move(payload));
     }
-    return send(std::move(report));
-  });
+    co_await send(std::move(report));
+  })));
 }
 
 void Client::print(std::ostream& out) const
