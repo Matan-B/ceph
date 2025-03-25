@@ -196,9 +196,12 @@ ClientRequest::interruptible_future<> ClientRequest::with_pg_process_interruptib
       co_return;
     }
 
+    // xxx1
+    // we can only know the *resolved* m->get_hobj once in process_op when getting the obc.
+    // Replicas are not calling recover_missing, if I don't have the head here - drop.
     pg.get_perf_logger().inc(l_osd_replica_read);
-    if (pg.is_unreadable_object(m->get_hobj())) {
-      DEBUGDPP("{}.{}: {} missing on replica, bouncing to primary",
+    if (pg.is_unreadable_object(m->get_hobj().get_head())) {
+      DEBUGDPP("{}.{}: {} missing head on replica, bouncing to primary",
 	       pg, *this, this_instance_id, m->get_hobj());
       pg.get_perf_logger().inc(l_osd_replica_read_redirect_missing);
       co_await reply_op_error(pgref, -EAGAIN);
@@ -339,6 +342,8 @@ ClientRequest::process_op(
   co_await ihref.enter_stage<interruptor>(
     ihref.obc_orderer->obc_pp().process, *this);
 
+  // xxx2
+  // head + (any) clone must be readbable on primary. Otherwise we wait for them below.
   if (!pg->is_primary()) {
     DEBUGDPP(
       "Skipping recover_missings on non primary pg for soid {}",
@@ -390,6 +395,14 @@ ClientRequest::process_op(
   ).si_then([]() -> int {
     return 0;
   }).handle_error_interruptible(
+    // xxx3
+    // handle enoent resolve_oid here.
+    // if replica && !may_write:
+    // this could be a replicated read, we only checked the head prior
+    // 1) inc(l_osd_replica_read_redirect_missing) -> classic doesn't do that yet
+    // 2) reply_op_error(pgref, EAGAIN!!!); -> bounce to primary
+
+    // if this is a write, this is scary (record_write_error)
     PG::load_obc_ertr::all_same_way(
       [](const auto &code) -> int {
 	return -code.value();

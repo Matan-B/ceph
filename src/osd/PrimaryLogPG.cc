@@ -2440,6 +2440,9 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
 	get_osdmap()->require_osd_release >= ceph_release_t::kraken) {
       record_write_error(op, oid, nullptr, r);
     } else {
+    if (!is_primary() && r == -EAGAIN) {
+      osd->logger->inc(l_osd_replica_read_redirect_missing);
+    }
       osd->reply_op_error(op, r);
     }
     return;
