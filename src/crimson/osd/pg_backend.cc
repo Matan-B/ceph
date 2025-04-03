@@ -1499,6 +1499,7 @@ PGBackend::omap_cmp(
     return crimson::ct_error::ecanceled::make();
   }
 }
+
 PGBackend::ll_read_ierrorator::future<>
 PGBackend::omap_get_vals(
   const ObjectState& os,
@@ -1507,7 +1508,11 @@ PGBackend::omap_get_vals(
 {
   if (!os.exists || os.oi.is_whiteout()) {
     logger().debug("{}: object does not exist: {}", os.oi.soid);
-    //return crimson::ct_error::enoent::make();
+    // Note: @Chunmei - see test_ertr_coroutine_error_2
+    //       We throw here.
+    co_await ll_read_ierrorator::future<>(crimson::ct_error::enoent::make());
+    // We could possibly:
+    ceph_abort("I should never have been caled");
   }
   std::string start_after;
   uint64_t max_return;
@@ -1568,6 +1573,7 @@ PGBackend::omap_get_vals(
             osd_op.rval = 0;
             return ll_read_errorator::now();
           }),
+          // Note: @Chunmei - see test_ertr_coroutine_pass_further
           ll_read_errorator::pass_further{}
         );
 }
