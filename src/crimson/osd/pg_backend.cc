@@ -1507,7 +1507,7 @@ PGBackend::omap_get_vals(
 {
   if (!os.exists || os.oi.is_whiteout()) {
     logger().debug("{}: object does not exist: {}", os.oi.soid);
-    return crimson::ct_error::enoent::make();
+    //return crimson::ct_error::enoent::make();
   }
   std::string start_after;
   uint64_t max_return;
@@ -1525,21 +1525,16 @@ PGBackend::omap_get_vals(
   max_return = \
     std::min(max_return, max_omap_entries);
 
-  return seastar::do_with(
-    ceph::bufferlist{},
-    uint32_t(0),
-    bool(false),
-    ObjectStore::omap_iter_seek_t::min_lower_bound(),
-    std::function<ObjectStore::omap_iter_ret_t(std::string_view, std::string_view)>(),
-    [&, start_after, max_return, filter_prefix, this]
-    (auto &result, auto &num, auto &truncated, auto &start_from, auto &callback) {
-
-      start_from.seek_position = filter_prefix > start_after ? filter_prefix : start_after;
-      start_from.seek_type = filter_prefix > start_after ?
-                             ObjectStore::omap_iter_seek_t::LOWER_BOUND :
-                             ObjectStore::omap_iter_seek_t::UPPER_BOUND;
-
-      callback = [filter_prefix, max_return, &result, &num, &truncated, &start_from]
+  ceph::bufferlist result;
+  uint32_t num = 0;
+  bool truncated = false;
+  ObjectStore::omap_iter_seek_t start_from = ObjectStore::omap_iter_seek_t::min_lower_bound();
+  start_from.seek_position = filter_prefix > start_after ? filter_prefix : start_after;
+  start_from.seek_type = filter_prefix > start_after ?
+                         ObjectStore::omap_iter_seek_t::LOWER_BOUND :
+                         ObjectStore::omap_iter_seek_t::UPPER_BOUND;
+  std::function<ObjectStore::omap_iter_ret_t(std::string_view, std::string_view)> callback =
+    [filter_prefix, max_return, &result, &num, &truncated, &start_from]
         (std::string_view key, std::string_view value) {
         if (num >= max_return) {
           truncated = true;
@@ -1556,7 +1551,7 @@ PGBackend::omap_get_vals(
       };
 
 
-      return maybe_do_omap_iterate(store, coll, os.oi, start_from, callback)
+    co_await maybe_do_omap_iterate(store, coll, os.oi, start_from, callback)
         .safe_then([&osd_op, &delta_stats, &result, &num, &truncated](auto ret) {
 	  if (ret != ObjectStore::omap_iter_ret_t::STOP) {
 	    logger().warn("omap_iterate not meet a stop condition");
@@ -1575,7 +1570,6 @@ PGBackend::omap_get_vals(
           }),
           ll_read_errorator::pass_further{}
         );
-  });
 }
 
 PGBackend::ll_read_ierrorator::future<>
