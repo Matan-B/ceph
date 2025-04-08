@@ -32,10 +32,8 @@ struct errorator_abort_test_t : public seastar_test_suite_t {
   };
 };
 
-// --- Aborts ---
+// --- The following tests must abort ---
 
-// The following aborts successfully
-// "Aborting on shard 0"
 /*
 TEST_F(errorator_abort_test_t, abort_vanilla)
 {
@@ -46,8 +44,6 @@ TEST_F(errorator_abort_test_t, abort_vanilla)
 }
 */
 
-// The following aborts successfully (even if ignored)
-// "Aborting on shard 0"
 /*
 TEST_F(errorator_abort_test_t, abort_ignored)
 {
@@ -63,9 +59,6 @@ TEST_F(errorator_abort_test_t, abort_ignored)
 }
 */
 
-// The following abort throws an exepction which is
-// catched by gtest
-// "C++ exception thrown in the test body"
 /*
 TEST_F(errorator_abort_test_t, assert_all)
 {
@@ -77,11 +70,6 @@ TEST_F(errorator_abort_test_t, assert_all)
 }
 */
 
-// CAUTION: ct_error::assert_* which carries an abort expection
-//          is not actually causing an abort/exepction when ignored:
-//          "seastar - Exceptional future ignored crimson::unthrowable_wrapper"
-//
-//          See following two ignore_assert_all, ignore_assert_failure
 /*
 TEST_F(errorator_abort_test_t, ignore_assert_all)
 {
