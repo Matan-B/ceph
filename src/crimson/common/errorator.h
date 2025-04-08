@@ -327,6 +327,10 @@ struct stateful_error_t : error_t<stateful_error_t<ErrorT>> {
     }
   };
 
+  auto exception_ptr() {
+    return ep;
+  }
+
 private:
   std::exception_ptr ep;
 
@@ -370,6 +374,9 @@ public:
     static_assert(!std::is_same_v<return_t, void>,
                   "error handlers mustn't return void");
     if constexpr (std::is_same_v<return_t, no_touch_error_marker>) {
+      [[maybe_unused]] auto &&ep = std::move(result).get_exception();
+      std::ignore = std::invoke(std::forward<ErrorVisitorT>(errfunc),
+                                ErrorT::error_t::from_exception_ptr(std::move(ep)));
       return;
     } else {
       // In C++ throwing an exception isn't the sole way to signal
@@ -969,8 +976,8 @@ public:
       static_assert(contains_once_v<std::decay_t<ErrorT>>,
                     "discarding disallowed ErrorT");
       try {
-        std::rethrow_exception(e.ep);
-      } catch(const typename ErrorT::error_type_t& err) {
+        std::rethrow_exception(e.exception_ptr());
+      } catch(const typename std::decay_t<ErrorT>::error_type_t& err) {
         f(err);
       }
       ceph_abort();
