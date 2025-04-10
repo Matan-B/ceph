@@ -403,11 +403,13 @@ public:
       // pointee's type with `__cxa_exception_type()` instead of costly
       // re-throwing (via `std::rethrow_exception()`) and matching with
       // `catch`. The limitation here is lack of support for hierarchies
-      // of exceptions. The code below checks for exact match only while
+      // of exceptions.
+
+      // The code below checks for exact match only while
       // `catch` would allow to match against a base class as well.
-      // However, this shouldn't be a big issue for `errorator` as Error
-      // Visitors are already checked for exhaustiveness at compile-time.
-      if (type_info == ErrorT::error_t::get_exception_ptr_type_info()) {
+      // However, this shouldn't be a big issue for `errorator` as
+      // ErrorVisitorT are already checked for exhaustiveness at compile-time.
+      assert(type_info == ErrorT::error_t::get_exception_ptr_type_info());
         // set `state::invalid` in internals of `seastar::future` to not
         // call `report_failed_future()` during `operator=()`.
         [[maybe_unused]] auto &&ep = std::move(result).get_exception();
@@ -419,7 +421,6 @@ public:
             std::forward<ErrorVisitorT>(errfunc),
             ErrorT::error_t::from_exception_ptr(std::move(ep)));
         }
-      }
     }
   }
 
