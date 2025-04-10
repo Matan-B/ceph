@@ -389,7 +389,7 @@ public:
     // label of: no_touch_error_marker. Otherwise we would fail the above
     // static assertion.
     if constexpr (std::is_same_v<return_t, no_touch_error_marker>) {
-      [[maybe_unused]] auto &&ep = std::move(result).get_exception();
+      auto&& ep = take_exception_from_future();
       std::ignore = std::invoke(std::forward<ErrorVisitorT>(errfunc),
                                 ErrorT::error_t::from_exception_ptr(std::move(ep)));
     } else {
@@ -411,11 +411,7 @@ public:
       // ErrorVisitorT are already checked for exhaustiveness at compile-time.
       assert(type_info == ErrorT::error_t::get_exception_ptr_type_info());
 
-      // seastar::future::get_exception()&& calls take_exception() internally.
-      // This will results in the future's state to be "state::invalid".
-      // That way when calling seastar::future `operator=()`,
-      // report_failed_future() won't be called.
-      [[maybe_unused]] auto &&ep = std::move(result).get_exception();
+      auto&& ep = take_exception_from_future();
 
       if constexpr (std::is_assignable_v<decltype(result), return_t>) {
         result = std::invoke(std::forward<ErrorVisitorT>(errfunc),
@@ -431,7 +427,17 @@ public:
   auto get_result() && {
     return std::move(result);
   }
+
+  // seastar::future::get_exception()&& calls take_exception() internally.
+  // This will results in the future's state to be "state::invalid".
+  // That way when calling seastar::future `operator=()`,
+  // report_failed_future() won't be called.
+  std::exception_ptr take_exception_from_future() && noexcept {
+    return std::move(result).get_exception();
+  }
 };
+
+
 
 template <class FuncHead, class... FuncTail>
 static constexpr auto composer(FuncHead&& head, FuncTail&&... tail) {
