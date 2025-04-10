@@ -410,17 +410,20 @@ public:
       // However, this shouldn't be a big issue for `errorator` as
       // ErrorVisitorT are already checked for exhaustiveness at compile-time.
       assert(type_info == ErrorT::error_t::get_exception_ptr_type_info());
-        // set `state::invalid` in internals of `seastar::future` to not
-        // call `report_failed_future()` during `operator=()`.
-        [[maybe_unused]] auto &&ep = std::move(result).get_exception();
-        if constexpr (std::is_assignable_v<decltype(result), return_t>) {
-          result = std::invoke(std::forward<ErrorVisitorT>(errfunc),
-                               ErrorT::error_t::from_exception_ptr(std::move(ep)));
-        } else {
-          result = FuturatorT::invoke(
-            std::forward<ErrorVisitorT>(errfunc),
-            ErrorT::error_t::from_exception_ptr(std::move(ep)));
-        }
+
+      // seastar::future::get_exception()&& calls take_exception() internally.
+      // This will results in the future's state to be "state::invalid".
+      // That way when calling seastar::future `operator=()`,
+      // report_failed_future() won't be called.
+      [[maybe_unused]] auto &&ep = std::move(result).get_exception();
+      if constexpr (std::is_assignable_v<decltype(result), return_t>) {
+        result = std::invoke(std::forward<ErrorVisitorT>(errfunc),
+                             ErrorT::error_t::from_exception_ptr(std::move(ep)));
+      } else {
+        result = FuturatorT::invoke(
+          std::forward<ErrorVisitorT>(errfunc),
+          ErrorT::error_t::from_exception_ptr(std::move(ep)));
+      }
     }
   }
 
