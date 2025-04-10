@@ -416,6 +416,7 @@ public:
       // That way when calling seastar::future `operator=()`,
       // report_failed_future() won't be called.
       [[maybe_unused]] auto &&ep = std::move(result).get_exception();
+
       if constexpr (std::is_assignable_v<decltype(result), return_t>) {
         result = std::invoke(std::forward<ErrorVisitorT>(errfunc),
                              ErrorT::error_t::from_exception_ptr(std::move(ep)));
