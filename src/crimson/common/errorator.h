@@ -370,14 +370,24 @@ public:
   void handle() {
     static_assert(std::is_invocable<ErrorVisitorT, ErrorT>::value,
                   "provided Error Visitor is not exhaustive");
+
+    // Forbid any error handlers that are returning void.
+    // See: https://tracker.ceph.com/issues/69406
     using return_t = std::invoke_result_t<ErrorVisitorT, ErrorT>;
     static_assert(!std::is_same_v<return_t, void>,
                   "error handlers mustn't return void");
+
+    // Any assert_* handler we have:
+    // assert_failure, assert_all and assert_all_func_t
+    // are expected to return void since we actually abort in them.
+    // This is why we need a way to diffreciate between them and between
+    // non-aborting error handlers (e.g handle) - for that we use the dedicated
+    // label of: no_touch_error_marker. Otherwise we would fail the above
+    // static assertion.
     if constexpr (std::is_same_v<return_t, no_touch_error_marker>) {
       [[maybe_unused]] auto &&ep = std::move(result).get_exception();
       std::ignore = std::invoke(std::forward<ErrorVisitorT>(errfunc),
                                 ErrorT::error_t::from_exception_ptr(std::move(ep)));
-      return;
     } else {
       // In C++ throwing an exception isn't the sole way to signal
       // error with it. This approach nicely fits cold, infrequent cases
