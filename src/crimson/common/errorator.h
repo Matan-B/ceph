@@ -133,8 +133,8 @@ class error_t {
     return ConcreteErrorT::exception_ptr_type_info();
   }
 
-  decltype(auto) static from_exception_ptr(std::exception_ptr ep) {
-    return ConcreteErrorT::from_exception_ptr(std::move(ep));
+  decltype(auto) static from_exception_ptr(std::exception_ptr ep, const std::type_info&& tt) {
+        return ConcreteErrorT::from_exception_ptr(std::move(ep), std::move(tt));
   }
 
   template <class... AllowedErrorsT>
@@ -253,7 +253,7 @@ private:
     // ref-counting.
     return carrier_instance;
   }
-  static const auto& from_exception_ptr(std::exception_ptr) {
+  static const auto& from_exception_ptr(std::exception_ptr, const std::type_info&&) {
     return make();
   }
 
@@ -342,7 +342,7 @@ private:
   auto to_exception_ptr() const {
     return ep;
   }
-  static stateful_error_t<ErrorT> from_exception_ptr(std::exception_ptr ep) {
+  static stateful_error_t<ErrorT> from_exception_ptr(std::exception_ptr ep, const std::type_info&&) {
     return stateful_error_t<ErrorT>(std::move(ep));
   }
 
@@ -401,7 +401,7 @@ public:
     // static assertion.
     if constexpr (std::is_same_v<return_t, no_touch_error_marker>) {
       std::ignore = std::invoke(std::forward<ErrorVisitorT>(errfunc),
-                                ErrorT::error_t::from_exception_ptr(std::move(ep)));
+                                ErrorT::error_t::from_exception_ptr(std::move(ep), std::move(type_info)));
     } else {
       // In C++ throwing an exception isn't the sole way to signal
       // error with it. This approach nicely fits cold, infrequent cases
@@ -418,11 +418,11 @@ public:
        // TODO: add missing explanation
       if constexpr (std::is_assignable_v<decltype(result), return_t>) {
         result = std::invoke(std::forward<ErrorVisitorT>(errfunc),
-                             ErrorT::error_t::from_exception_ptr(std::move(ep)));
+                             ErrorT::error_t::from_exception_ptr(std::move(ep), std::move(type_info)));
       } else {
         result = FuturatorT::invoke(
           std::forward<ErrorVisitorT>(errfunc),
-          ErrorT::error_t::from_exception_ptr(std::move(ep)));
+          ErrorT::error_t::from_exception_ptr(std::move(ep), std::move(type_info)));
       }
     }
   }
