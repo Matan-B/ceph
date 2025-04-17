@@ -96,12 +96,9 @@ InternalClientRequest::with_interruption()
   co_await pg->run_executer(
     ox, obc_manager.get_obc(), op_info, osd_ops
   ).handle_error_interruptible(
-    crimson::ct_error::all_same_way(
-      [this, FNAME](auto e) {
-	ERRORDPPI("{}: got unexpected error {}", *pg, *this, e);
-	ceph_assert(0 == "should not return an error");
-	return interruptor::now();
-      })
+    crimson::ct_error::assert_all(fmt::format("{} {}: {} got unexpected error", FNAME, *pg, *this))
+    // todo1: get e..
+    // todo2: switch to std::format (out of scope)
   );
 
   auto [submitted, completed] = co_await pg->submit_executer(
