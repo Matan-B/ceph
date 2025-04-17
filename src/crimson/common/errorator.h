@@ -966,10 +966,9 @@ public:
 
   // assert_all{ "TODO" };
   class assert_all {
-    const char* const msg = nullptr;
+    const std::string msg;
   public:
-    template <std::size_t N>
-    assert_all(const char (&msg)[N])
+    assert_all(const std::string msg)
       : msg(msg) {
     }
     assert_all() = default;
@@ -978,8 +977,8 @@ public:
     no_touch_error_marker operator()(ErrorT&&) {
       static_assert(contains_once_v<std::decay_t<ErrorT>>,
                     "discarding disallowed ErrorT");
-      if (msg) {
-        ceph_abort_msg(msg);
+      if (!msg.empty()) {
+        ceph_abort_msg(msg.c_str());
       } else {
         ceph_abort();
       }
@@ -1334,11 +1333,10 @@ namespace ct_error {
   };
 
   class assert_all {
-    const char* const msg = nullptr;
+    const std::string msg;
     std::function<void()> pre_assert;
   public:
-    template <std::size_t N>
-    assert_all(const char (&msg)[N])
+    assert_all(const std::string msg)
       : msg(msg) {
     }
     assert_all() = default;
@@ -1350,8 +1348,8 @@ namespace ct_error {
       if (pre_assert) {
         pre_assert();
       }
-      if (msg) {
-        ceph_abort_msg(msg);
+      if (!msg.empty()) {
+        ceph_abort_msg(msg.c_str());
       } else {
         ceph_abort();
       }
