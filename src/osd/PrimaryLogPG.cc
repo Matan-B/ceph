@@ -4509,8 +4509,7 @@ void PrimaryLogPG::do_scan(
 	return;
       }
 
-      ReplicaBackfillInterval bi;
-      bi.begin = m->begin;
+      ReplicaBackfillInterval bi(m->begin);
       // No need to flush, there won't be any in progress writes occuring
       // past m->begin
       scan_range_replica(
@@ -4535,16 +4534,11 @@ void PrimaryLogPG::do_scan(
       // Check that from is in backfill_targets vector
       ceph_assert(is_backfill_target(from));
 
-      ReplicaBackfillInterval& bi = peer_backfill_info[from];
-      bi.begin = m->begin;
-      bi.end = m->end;
-      auto p = m->get_data().cbegin();
+      ReplicaBackfillInterval bi(m->begin, m->end, m->get_data());
+      ceph_assert(peer_backfill_info.contains(from));
+      peer_backfill_info.at(from) = bi;
 
-      // take care to preserve ordering!
-      bi.clear_objects();
-      decode_noclear(bi.objects, p);
-      dout(10) << __func__ << " bi.begin=" << bi.begin << " bi.end=" << bi.end
-               << " bi.objects.size()=" << bi.objects.size() << dendl;
+      dout(10) << __func__ << " " << peer_backfill_info.at(from) << dendl;
 
       if (waiting_on_backfill.erase(from)) {
 	if (waiting_on_backfill.empty()) {
@@ -13927,28 +13921,22 @@ uint64_t PrimaryLogPG::recover_backfill(
     ceph_assert(last_backfill_started == recovery_state.earliest_backfill());
     new_backfill = false;
 
-    // initialize BackfillIntervals
-    for (set<pg_shard_t>::const_iterator i = get_backfill_targets().begin();
-	 i != get_backfill_targets().end();
-	 ++i) {
-      peer_backfill_info[*i].reset(
-	recovery_state.get_peer_info(*i).last_backfill);
+    // initialize BackfillIntervals targets
+    for (const auto& target : get_backfill_targets()) {
+      ReplicaBackfillInterval peer_interval(recovery_state.get_peer_info(target).last_backfill);
+      peer_backfill_info.emplace(target, peer_interval);
     }
-    backfill_info.reset(last_backfill_started);
+    backfill_info = PrimaryBackfillInterval(last_backfill_started);
 
     backfills_in_flight.clear();
     pending_backfill_updates.clear();
   }
 
-  for (set<pg_shard_t>::const_iterator i = get_backfill_targets().begin();
-       i != get_backfill_targets().end();
-       ++i) {
-    dout(10) << "peer osd." << *i
-	   << " info " << recovery_state.get_peer_info(*i)
-	   << " interval " << peer_backfill_info[*i].begin
-	   << "-" << peer_backfill_info[*i].end
-	   << " " << peer_backfill_info[*i].objects.size() << " objects"
-	   << dendl;
+  for (const auto& target : get_backfill_targets()) {
+        dout(10) << "peer osd." << target
+               << " info " << recovery_state.get_peer_info(target)
+               << " interval " << peer_backfill_info.at(target)
+               << dendl;
   }
 
   // update our local interval to cope with recent changes
@@ -13959,13 +13947,12 @@ uint64_t PrimaryLogPG::recover_backfill(
   vector<boost::tuple<hobject_t, eversion_t, pg_shard_t> > to_remove;
   set<hobject_t> add_to_stat;
 
-  for (set<pg_shard_t>::const_iterator i = get_backfill_targets().begin();
-       i != get_backfill_targets().end();
-       ++i) {
-    peer_backfill_info[*i].trim_to(
-      std::max(
-	recovery_state.get_peer_info(*i).last_backfill,
-	last_backfill_started));
+  // update peer's interval to cope with recent changes
+  for (const auto& target : get_backfill_targets()) {
+    ceph_assert(peer_backfill_info.contains(target));
+    peer_backfill_info.at(target).trim_to(std::max(
+      recovery_state.get_peer_info(target).last_backfill,
+      last_backfill_started));
   }
   backfill_info.trim_to(last_backfill_started);
 
@@ -13974,8 +13961,11 @@ uint64_t PrimaryLogPG::recover_backfill(
     if (backfill_info.begin <= earliest_peer_backfill() &&
 	!backfill_info.extends_to_end() && backfill_info.empty()) {
       hobject_t next = backfill_info.end;
-      backfill_info.reset(next);
-      backfill_info.end = hobject_t::get_max();
+      // TODO: 
+      // first intorduce the scan returning the instance commit
+      // then this could be updated
+      //backfill_info = PrimaryBackfillInterval(next, hobject_t::get_max());
+      backfill_info = PrimaryBackfillInterval(next);
       update_range(&backfill_info, handle);
       backfill_info.trim();
     }
@@ -13983,11 +13973,9 @@ uint64_t PrimaryLogPG::recover_backfill(
     dout(20) << "   my backfill interval " << backfill_info << dendl;
 
     bool sent_scan = false;
-    for (set<pg_shard_t>::const_iterator i = get_backfill_targets().begin();
-	 i != get_backfill_targets().end();
-	 ++i) {
-      pg_shard_t bt = *i;
-      ReplicaBackfillInterval& pbi = peer_backfill_info[bt];
+    for (const auto& bt : get_backfill_targets()) {
+      ceph_assert(peer_backfill_info.contains(bt));
+      ReplicaBackfillInterval& pbi = peer_backfill_info.at(bt);
 
       dout(20) << " peer shard " << bt << " backfill " << pbi << dendl;
       if (pbi.begin <= backfill_info.begin &&
@@ -14030,11 +14018,9 @@ uint64_t PrimaryLogPG::recover_backfill(
     if (check < backfill_info.begin) {
 
       set<pg_shard_t> check_targets;
-      for (set<pg_shard_t>::const_iterator i = get_backfill_targets().begin();
-	   i != get_backfill_targets().end();
-	   ++i) {
-        pg_shard_t bt = *i;
-        ReplicaBackfillInterval& pbi = peer_backfill_info[bt];
+      for (const auto& bt : get_backfill_targets()) {
+        ceph_assert(peer_backfill_info.contains(bt));
+        ReplicaBackfillInterval& pbi = peer_backfill_info.at(bt);
         if (pbi.begin == check)
           check_targets.insert(bt);
       }
@@ -14042,11 +14028,9 @@ uint64_t PrimaryLogPG::recover_backfill(
 
       dout(20) << " BACKFILL removing " << check
 	       << " from peers " << check_targets << dendl;
-      for (set<pg_shard_t>::iterator i = check_targets.begin();
-	   i != check_targets.end();
-	   ++i) {
-        pg_shard_t bt = *i;
-        ReplicaBackfillInterval& pbi = peer_backfill_info[bt];
+      for (const auto& bt : check_targets) {
+        ceph_assert(peer_backfill_info.contains(bt));
+        ReplicaBackfillInterval& pbi = peer_backfill_info.at(bt);
         ceph_assert(pbi.begin == check);
 
         to_remove.push_back(boost::make_tuple(check, pbi.objects.begin()->second, bt));
@@ -14071,11 +14055,9 @@ uint64_t PrimaryLogPG::recover_backfill(
 	++it;
       }
       vector<pg_shard_t> need_ver_targs, missing_targs, keep_ver_targs, skip_targs;
-      for (set<pg_shard_t>::const_iterator i = get_backfill_targets().begin();
-	   i != get_backfill_targets().end();
-	   ++i) {
-	pg_shard_t bt = *i;
-	ReplicaBackfillInterval& pbi = peer_backfill_info[bt];
+      for (const auto& bt : get_backfill_targets()) {
+        ceph_assert(peer_backfill_info.contains(bt));
+        ReplicaBackfillInterval& pbi = peer_backfill_info.at(bt);
         // Find all check peers that have the wrong version
 	if (check == backfill_info.begin && check == pbi.begin) {
 	  eversion_t replicaobj_v;
@@ -14156,8 +14138,7 @@ uint64_t PrimaryLogPG::recover_backfill(
 	   i != check_targets.end();
 	   ++i) {
         pg_shard_t bt = *i;
-        ReplicaBackfillInterval& pbi = peer_backfill_info[bt];
-        pbi.pop_front();
+        peer_backfill_info.at(bt).pop_front();
       }
     }
   }
@@ -14429,7 +14410,8 @@ void PrimaryLogPG::scan_range_primary(
   ceph_assert(is_locked());
   dout(10) << "scan_range_primary from " << bi->begin <<
               " backfill_targets " << backfill_targets << dendl;
-  bi->clear_objects();
+
+  std::multimap<hobject_t, std::pair<shard_id_t, eversion_t>> objects;
 
   vector<hobject_t> ls;
   ls.reserve(max);
@@ -14474,23 +14456,24 @@ void PrimaryLogPG::scan_range_primary(
     }
     dout(20) << "  " << *p << " " << version << dendl;
     if (shard_versions.empty()) {
-      bi->objects.insert(make_pair(*p, std::make_pair(shard_id_t::NO_SHARD,
+      objects.insert(make_pair(*p, std::make_pair(shard_id_t::NO_SHARD,
 						      version)));
     } else {
       bool added_default = false;
       for (auto & shard: backfill_targets) {
 	if (shard_versions.contains(shard.shard)) {
 	  version = shard_versions.at(shard.shard);
-	  bi->objects.insert(make_pair(*p, std::make_pair(shard.shard,
+	  objects.insert(make_pair(*p, std::make_pair(shard.shard,
 							  version)));
 	} else if (!added_default) {
-	  bi->objects.insert(make_pair(*p, std::make_pair(shard_id_t::NO_SHARD,
+	  objects.insert(make_pair(*p, std::make_pair(shard_id_t::NO_SHARD,
 							  version)));
 	  added_default = true;
 	}
       }
     }
   }
+  bi->populate(std::move(objects));
 }
 
 void PrimaryLogPG::scan_range_replica(
@@ -14499,7 +14482,8 @@ void PrimaryLogPG::scan_range_replica(
 {
   ceph_assert(is_locked());
   dout(10) << "scan_range_replica from " << bi->begin << dendl;
-  bi->clear_objects();
+
+  std::map<hobject_t,eversion_t> objects;
 
   vector<hobject_t> ls;
   ls.reserve(max);
@@ -14523,9 +14507,10 @@ void PrimaryLogPG::scan_range_replica(
 
     ceph_assert(r >= 0);
     object_info_t oi(bl);
-    bi->objects[*p] = oi.version;
+    objects[*p] = oi.version;
     dout(20) << "  " << *p << " " << oi.version << dendl;
   }
+  bi->populate(std::move(objects));
 }
 
 /** check_local

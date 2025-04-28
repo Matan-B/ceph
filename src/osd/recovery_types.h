@@ -13,8 +13,10 @@
  * Represents the objects in a range [begin, end)
  *
  * Possible states:
- * 1) begin == end == hobject_t() indicates the the interval is unpopulated
- * 2) Else, objects contains all objects in [begin, end)
+ * 0) Empty instance - default constructed
+ * 1) Unpopulated    - BackfillInterval::begin == BackfillInterval::end
+ * 2) Populated      - BackfillInterval::objects contains all existing objects
+ *                     in logical range of [BackfillInterval::begin, BackfillInterval::end)
  *
  * ReplicaBackfillInterval
  *
@@ -50,30 +52,51 @@ class BackfillInterval {
 public:
   // info about a backfill interval on a peer
   eversion_t version; /// version at which the scan occurred
-  hobject_t begin;
-  hobject_t end;
+  hobject_t begin; /// object to start populating the interval from
+  hobject_t end;   /// object to start populating the interval to
+  bool populated = false;
   T objects;
 
   virtual ~BackfillInterval() = default;
+
+  // Constructs an unpopulated instance where
+  // begin==end. This is used for the
+  // initalzation of peer_backfill_info.
+  BackfillInterval(hobject_t begin) : begin(begin), end(begin) {}
+
+  // Construct a fully populated instance
+  BackfillInterval(hobject_t begin,
+                   hobject_t end,
+                   const T&& objects,
+                   eversion_t version = eversion_t{}) :
+  begin(begin), end(end)
+  {
+    ceph_assert(begin <= end);
+    populate(std::move(objects), version);
+  }
+
   BackfillInterval() = default;
   BackfillInterval(const BackfillInterval&) = default;
   BackfillInterval(BackfillInterval&&) = default;
   BackfillInterval& operator=(const BackfillInterval&) = default;
   BackfillInterval& operator=(BackfillInterval&&) = default;
 
+  // populate the objects in the interval and update version
+  void populate(const T&& _objects,
+                eversion_t _version = eversion_t{}) {
+    ceph_assert(objects.empty() && !populated);
+    objects = std::move(_objects);
+    version = _version;
+    populated = true;
+  }
+
+  /// true if interval is populated
+  bool is_populated() {
+    return populated;
+  }
+
   /// clear content
-  virtual void clear() = 0;
-
-  /// clear objects std::list only
-  void clear_objects() {
-    objects.clear();
-  }
-
-  /// reinstantiate with a new start+end position and sort order
-  void reset(hobject_t start) {
-    clear();
-    begin = end = start;
-  }
+  //virtual void clear() = 0;
 
   /// true if there are no objects in this interval
   bool empty() const {
@@ -103,6 +126,15 @@ public:
     }
   }
 
+  /// clear content
+  void clear() {
+    version = eversion_t{};
+    begin = hobject_t{};
+    end = hobject_t{};
+    populated = false;
+    objects.clear();
+  }
+
   /// drop first entry, and adjust @begin accordingly
   virtual void pop_front() = 0;
 
@@ -114,10 +146,20 @@ class PrimaryBackfillInterval: public BackfillInterval<std::multimap<hobject_t,
 					std::pair<shard_id_t, eversion_t>>> {
 public:
 
+  PrimaryBackfillInterval() : BackfillInterval() {}
+
+  PrimaryBackfillInterval(hobject_t begin) : BackfillInterval(begin) {}
+
+  PrimaryBackfillInterval(hobject_t begin,
+                          hobject_t end,
+                          const std::multimap<hobject_t, std::pair<shard_id_t, eversion_t>>&& objects,
+                          eversion_t version = eversion_t{}) :
+  BackfillInterval(begin, end, std::move(objects), version) {}
+
   /// clear content
-  void clear() override {
-    *this = PrimaryBackfillInterval();
-  }
+  //void clear() override {
+  //  *this = PrimaryBackfillInterval();
+  //}
 
   /// drop first entry, and adjust @begin accordingly
   void pop_front() override {
@@ -147,9 +189,36 @@ public:
 class ReplicaBackfillInterval: public BackfillInterval<std::map<hobject_t,
 								eversion_t>> {
 public:
+
+  ReplicaBackfillInterval(hobject_t begin) : BackfillInterval(begin) {}
+
+  ReplicaBackfillInterval(hobject_t begin,
+                          hobject_t end,
+                          const std::map<hobject_t, eversion_t>&& objects,
+                          eversion_t version = eversion_t{}) :
+  BackfillInterval(begin, end, std::move(objects), version) {}
+
+  // Construct a fully populated instance
+  ReplicaBackfillInterval(hobject_t begin,
+                          hobject_t end,
+                          const ceph::buffer::list& data) {
+    begin = begin;
+    end = end;
+    ceph_assert(begin <= end);
+    populate_from_data(data);
+  }
+
   /// clear content
-  void clear() override {
-    *this = ReplicaBackfillInterval();
+  //void clear() override {
+  //  *this = ReplicaBackfillInterval();
+ // }
+
+  // populate the objects in the interval
+  void populate_from_data(const ceph::buffer::list& data) {
+    ceph_assert(objects.empty() && !populated);
+    auto p = data.cbegin();
+    decode_noclear(objects, p);
+    populated = true;
   }
 
   /// drop first entry, and adjust @begin accordingly
@@ -177,10 +246,11 @@ public:
 template<typename T> std::ostream& operator<<(std::ostream& out,
 					      const BackfillInterval<T>& bi)
 {
-  out << "BackfillInfo(" << bi.begin << "-" << bi.end << " ";
-  if (!bi.objects.empty()) {
-    out << bi.objects.size() << " objects " << bi.objects;
-  }
+  out << "BackfillInfo(" << "populated: " << bi.populated
+      << " " << bi.begin << "-" << bi.end
+      << " " << bi.objects.size() << " objects";
+  if (!bi.objects.empty())
+    out << " " << bi.objects;
   out << ")";
   return out;
 }

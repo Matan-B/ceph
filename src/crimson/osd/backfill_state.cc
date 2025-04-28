@@ -87,11 +87,14 @@ BackfillState::Initial::react(const BackfillState::Triggered& evt)
   ceph_assert(peering_state().is_backfilling());
   // initialize ReplicaBackfillIntervals
   for (const auto& bt : peering_state().get_backfill_targets()) {
-    backfill_state().peer_backfill_info[bt].reset(
-      peering_state().get_peer_last_backfill(bt));
+    backfill_state().peer_backfill_info.emplace(
+      bt,
+      ReplicaBackfillInterval(peering_state().get_peer_last_backfill(bt)));
   }
-  backfill_state().backfill_info.reset(backfill_state().last_backfill_started);
-  if (Enqueuing::all_enqueued(peering_state(),
+  backfill_state().backfill_info =
+    PrimaryBackfillInterval(backfill_state().last_backfill_started);
+
+    if (Enqueuing::all_enqueued(peering_state(),
                               backfill_state().backfill_info,
                               backfill_state().peer_backfill_info)) {
     DEBUGDPP("switching to Done state", pg());
@@ -197,7 +200,8 @@ void BackfillState::Enqueuing::maybe_update_range()
 void BackfillState::Enqueuing::trim_backfill_infos()
 {
   for (const auto& bt : peering_state().get_backfill_targets()) {
-    backfill_state().peer_backfill_info[bt].trim_to(
+    ceph_assert(backfill_state().peer_backfill_info.contains(bt));
+    backfill_state().peer_backfill_info.at(bt).trim_to(
       std::max(peering_state().get_peer_last_backfill(bt),
                backfill_state().last_backfill_started));
   }
@@ -559,7 +563,8 @@ BackfillState::ReplicasScanning::react(ReplicaScanned evt)
   // the machine to the state.
   ceph_assert(peering_state().is_backfill_target(evt.from));
   if (waiting_on_backfill.erase(evt.from)) {
-    backfill_state().peer_backfill_info[evt.from] = std::move(evt.result);
+    ceph_assert(backfill_state().peer_backfill_info.contains(evt.from));
+    backfill_state().peer_backfill_info.at(evt.from) = std::move(evt.result);
     if (waiting_on_backfill.empty()) {
       ceph_assert(backfill_state().peer_backfill_info.size() == \
                   peering_state().get_backfill_targets().size());

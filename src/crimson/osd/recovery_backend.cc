@@ -274,13 +274,10 @@ RecoveryBackend::scan_for_backfill_primary(
       co_return;
     }
   }));
-  PrimaryBackfillInterval bi;
-  bi.begin = std::move(start);
-  bi.end = std::move(next);
-  bi.objects = std::move(*version_map);
+  PrimaryBackfillInterval bi(std::move(start), std::move(next),
+                             std::move(*version_map));
   DEBUGDPP("{} PrimaryBackfillInterval filled, leaving, {}",
-           "scan_for_backfill_primary",
-           pg, bi);
+           "scan_for_backfill_primary", pg, bi);
   co_return std::move(bi);
 }
 
@@ -332,13 +329,10 @@ RecoveryBackend::scan_for_backfill_replica(
       co_return;
     }
   }));
-  ReplicaBackfillInterval bi;
-  bi.begin = std::move(start);
-  bi.end = std::move(next);
-  bi.objects = std::move(*version_map);
+  ReplicaBackfillInterval bi(std::move(start), std::move(next),
+                             std::move(*version_map));
   DEBUGDPP("{} ReplicaBackfillInterval filled, leaving, {}",
-           "scan_for_backfill_replica",
-           pg, bi);
+           "scan_for_backfill_replica", pg, bi);
   co_return std::move(bi);
 }
 
@@ -389,15 +383,7 @@ RecoveryBackend::handle_scan_digest(
   // Check that from is in backfill_targets vector
   ceph_assert(pg.is_backfill_target(m.from));
 
-  ReplicaBackfillInterval bi;
-  bi.begin = m.begin;
-  bi.end = m.end;
-  {
-    auto p = m.get_data().cbegin();
-    // take care to preserve ordering!
-    bi.clear_objects();
-    ::decode_noclear(bi.objects, p);
-  }
+  ReplicaBackfillInterval bi(m.begin, m.end, m.get_data());
   auto recovery_handler = pg.get_recovery_handler();
   recovery_handler->dispatch_backfill_event(
     crimson::osd::BackfillState::ReplicaScanned{
