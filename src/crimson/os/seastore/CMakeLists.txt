@@ -68,8 +68,7 @@ endif()
 add_library(crimson-seastore STATIC
   ${crimson_seastore_srcs})
 
-target_link_libraries(crimson-seastore
-  crimson)
+target_link_libraries(crimson-seastore PUBLIC crimson::cflags)
 if(WITH_ZNS)
   target_link_libraries(crimson-seastore
     Linux::ZNS)

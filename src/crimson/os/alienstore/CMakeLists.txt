@@ -34,10 +34,6 @@ endif()
 add_library(crimson-alien-common STATIC
   ${crimson_alien_common_srcs})
 
-add_library(alien::cflags INTERFACE IMPORTED)
-set_target_properties(alien::cflags PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:Seastar::seastar,INTERFACE_INCLUDE_DIRECTORIES>)
-
 set(alien_store_srcs
   alien_store.cc
   thread_pool.cc
@@ -74,13 +70,13 @@ endif()
 
 # For crimson-alienstore WITH_CRIMSON is not defined
 target_link_libraries(crimson-alienstore
+  PUBLIC
+    seastar
+    crimson-alien-common
   PRIVATE
-    alien::cflags
     ${FMT_LIB}
     kv
     heap_profiler
-    crimson-alien-common
     ${BLKID_LIBRARIES}
     ${UDEV_LIBRARIES}
-    seastar
     blk)
