@@ -67,7 +67,6 @@ endif()
 target_link_libraries(crimson-osd
   legacy-option-headers
   crimson-admin
-  crimson-common
   crimson-os
   crimson
   ${FMT_LIB}
