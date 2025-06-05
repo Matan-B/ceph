@@ -69,7 +69,7 @@ add_library(crimson-seastore STATIC
   ${crimson_seastore_srcs})
 
 target_link_libraries(crimson-seastore
-  crimson)
+  crimson-common)
 if(WITH_ZNS)
   target_link_libraries(crimson-seastore
     Linux::ZNS)
