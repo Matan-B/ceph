@@ -10,6 +10,7 @@ endif()
 
 add_subdirectory(seastore)
 target_link_libraries(crimson-os
+PRIVATE
   crimson-cyanstore
   ${alienstore_lib}
   crimson-seastore)

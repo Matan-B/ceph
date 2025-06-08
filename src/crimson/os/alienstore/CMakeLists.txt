@@ -18,6 +18,7 @@ set(crimson_alien_common_srcs
   ${PROJECT_SOURCE_DIR}/src/common/TrackedOp.cc
   ${PROJECT_SOURCE_DIR}/src/common/WorkQueue.cc
   ${PROJECT_SOURCE_DIR}/src/common/util.cc
+  ${PROJECT_SOURCE_DIR}/src/compressor/Compressor.cc
   ${PROJECT_SOURCE_DIR}/src/crush/CrushLocation.cc
   ${PROJECT_SOURCE_DIR}/src/global/global_context.cc
   ${PROJECT_SOURCE_DIR}/src/log/Log.cc
@@ -30,8 +31,10 @@ if(WITH_CEPH_DEBUG_MUTEX)
     ${PROJECT_SOURCE_DIR}/src/common/condition_variable_debug.cc
     ${PROJECT_SOURCE_DIR}/src/common/shared_mutex_debug.cc)
 endif()
-add_library(crimson-alien-common STATIC
-  ${crimson_alien_common_srcs})
+
+add_library(crimson-alien-common OBJECT ${crimson_alien_common_srcs})
+target_link_libraries(crimson-alien-common PRIVATE  $<TARGET_OBJECTS:crimson-auth-common-objs>)
+
 
 add_library(alien::cflags INTERFACE IMPORTED)
 set_target_properties(alien::cflags PROPERTIES
@@ -78,7 +81,7 @@ target_link_libraries(crimson-alienstore
     ${FMT_LIB}
     kv
     heap_profiler
-    crimson-alien-common
+    $<TARGET_OBJECTS:crimson-alien-common>
     ${BLKID_LIBRARIES}
     ${UDEV_LIBRARIES}
     seastar

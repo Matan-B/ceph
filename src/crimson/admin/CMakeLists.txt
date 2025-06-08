@@ -3,6 +3,7 @@ add_library(crimson-admin STATIC
   osd_admin.cc
   pg_commands.cc)
 target_link_libraries(crimson-admin
+PRIVATE
   legacy-option-headers
   crimson::cflags
   Boost::MPL)
