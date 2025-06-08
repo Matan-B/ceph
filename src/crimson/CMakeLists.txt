@@ -127,26 +127,16 @@ target_compile_definitions(crimson-common PRIVATE
   "CEPH_INSTALL_FULL_PKGLIBDIR=\"${CEPH_INSTALL_FULL_PKGLIBDIR}\""
   "CEPH_INSTALL_DATADIR=\"${CEPH_INSTALL_DATADIR}\"")
 
-set(crimson_common_deps
-  Boost::iostreams
-  Boost::random
-  json_spirit)
-
-set(crimson_common_public_deps crimson::cflags)
-if(WITH_JAEGER)
-  list(APPEND crimson_common_public_deps jaeger_base)
-endif()
-
-if(NOT WITH_SYSTEM_BOOST)
-  list(APPEND crimson_common_deps ${ZLIB_LIBRARIES})
-endif()
-
 target_link_libraries(crimson-common
   PUBLIC
-    ${crimson_common_public_deps}
+    crimson::cflags
+    $<$<BOOL:${WITH_JAEGER}>:jaeger_base>
   PRIVATE
     crc32 arch
-    ${crimson_common_deps}
+    Boost::iostreams
+    Boost::random
+    json_spirit
+    $<$<BOOL:${WITH_SYSTEM_BOOST}>:${ZLIB_LIBRARIES}>
     OpenSSL::Crypto)
 
 set(crimson_auth_srcs
