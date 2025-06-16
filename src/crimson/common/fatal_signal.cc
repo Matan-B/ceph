@@ -93,7 +93,7 @@ void FatalSignal::install_oneshot_signal_handler()
   // `print_backtrace()` in our backtraces. `+ 1` is for the extra
   // frame created by kernel (signal trampoline, it will take care
   // about e.g. sigreturn(2) calling; see the man page).
-  constexpr std::size_t FRAMES_TO_SKIP = 3 + 1;
+  constexpr std::size_t FRAMES_TO_SKIP = 2 + 1;
 
   // Let's inform regarding the abort before getting the stacktrace
   GENERIC_ERROR("Aborting {} on shard {} - Stopping all shards",
