@@ -344,31 +344,27 @@ public:
     LOG_PREFIX(AdminSocketHook::DumpMetricsHook);
     DEBUG("");
     std::unique_ptr<Formatter> fref{Formatter::create(format, "json-pretty", "json-pretty")};
-    auto *f = fref.get();
     std::string prefix;
     cmd_getval(cmdmap, "group", prefix);
-    f->open_object_section("metrics");
-    f->open_array_section("metrics");
-    return seastar::do_with(std::move(prefix), [f](auto &prefix) {
-      return crimson::reactor_map_seq([f, &prefix] {
-        for (const auto& [full_name, metric_family]: seastar::scollectd::get_value_map()) {
-          if (!prefix.empty() && full_name.compare(0, prefix.size(), prefix) != 0) {
-            continue;
-          }
-          for (const auto& [labels, metric] : metric_family) {
-            if (metric && metric->is_enabled()) {
-	      f->open_object_section(""); // enclosed by array
-              DumpMetricsHook::dump_metric_value(f, full_name, *metric, labels.labels());
-	      f->close_section();
-            }
+    fref->open_object_section("metrics");
+    fref->open_array_section("metrics");
+    co_await crimson::reactor_map_seq([f = fref.get(), &prefix] {
+      for (const auto& [full_name, metric_family]: seastar::scollectd::get_value_map()) {
+        if (!prefix.empty() && full_name.compare(0, prefix.size(), prefix) != 0) {
+          continue;
+        }
+        for (const auto& [labels, metric] : metric_family) {
+          if (metric && metric->is_enabled()) {
+	    f->open_object_section(""); // enclosed by array
+            DumpMetricsHook::dump_metric_value(f, full_name, *metric, labels.labels());
+	    f->close_section();
           }
         }
-      });
-    }).then([fref = std::move(fref)]() mutable {
-      fref->close_section();
-      fref->close_section();
-      return seastar::make_ready_future<tell_result_t>(std::move(fref));
+      }
     });
+    fref->close_section();
+    fref->close_section();
+    co_return std::move(fref);
   }
 private:
   using registered_metric = seastar::metrics::impl::registered_metric;
@@ -594,21 +590,17 @@ public:
   {
     LOG_PREFIX(AdminSocketHook::DumpInFlightOpsHook);
     DEBUG("");
-    unique_ptr<Formatter> fref{
-      Formatter::create(format, "json-pretty", "json-pretty")};
-    auto *f = fref.get();
-    f->open_object_section("ops_in_flight");
-    f->open_array_section("ops_in_flight");
-    return pg_shard_manager.when_active()
-    .then([this, f, fref=std::move(fref)]() mutable {
-      return pg_shard_manager.invoke_on_each_shard_seq([f](const auto &shard_services) {
+    std::unique_ptr<Formatter> fref{Formatter::create(format, "json-pretty", "json-pretty")};
+    fref->open_object_section("ops_in_flight");
+    fref->open_array_section("ops_in_flight");
+    co_await pg_shard_manager.when_active();
+    co_await pg_shard_manager.invoke_on_each_shard_seq(
+      [f = fref.get()](const auto &shard_services) {
         return shard_services.dump_ops_in_flight(f);
-      }).then([fref=std::move(fref)]() mutable {
-        fref->close_section();
-        fref->close_section();
-        return seastar::make_ready_future<tell_result_t>(std::move(fref));
-      });
     });
+    fref->close_section();
+    fref->close_section();
+    co_return std::move(fref);
   }
 private:
   const crimson::osd::PGShardManager &pg_shard_manager;
