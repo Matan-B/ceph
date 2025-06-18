@@ -309,10 +309,10 @@ public:
     F &&f) const {
     return sharded_map_seq(
       shard_services,
-      [f=std::forward<F>(f)](const ShardServices &shard_services) mutable {
+      [f=std::forward<F>(f)](const ShardServices &local_service) mutable {
 	return std::invoke(
 	  f,
-	  shard_services);
+	  local_service);
       });
   }
 
