@@ -91,6 +91,7 @@ template <typename T, typename F>
 auto sharded_map_seq(T &t, F &&f) {
   return reactor_map_seq(
     [&t, f=std::forward<F>(f)]() mutable {
+      ceph_assert(t.local_is_initialized());
       return std::invoke(f, t.local());
     });
 }
