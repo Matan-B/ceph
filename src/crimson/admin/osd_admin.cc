@@ -600,8 +600,8 @@ public:
         DEBUG("hey");
         //const auto mnow = local_state.get_mnow();
         //DEBUG("got {}", mnow);
-        return local_state.dump_ops_in_flight(f);
-        //return seastar::now();
+        //return local_state.dump_ops_in_flight(f);
+        return seastar::now();
     });
     fref->close_section();
     fref->close_section();
