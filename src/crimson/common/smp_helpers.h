@@ -60,24 +60,20 @@ auto reactor_map_seq(F &&f) {
     auto ret = crimson::do_for_each(
       seastar::smp::all_cpus().begin(),
       seastar::smp::all_cpus().end(),
-      [f=std::move(f)](auto core) mutable {
+      [&f](auto core) mutable {
 	return seastar::smp::submit_to(
 	  core,
-	  [&f] {
-	    return std::invoke(f);
-	  });
+	  F(f));
       });
     return ret_type(ret);
   } else {
     return seastar::do_for_each(
       seastar::smp::all_cpus().begin(),
       seastar::smp::all_cpus().end(),
-      [f=std::move(f)](auto core) mutable {
+      [&f](auto core) mutable {
 	return seastar::smp::submit_to(
 	  core,
-	  [&f] {
-	    return std::invoke(f);
-	  });
+	  F(f));
       });
   }
 }
