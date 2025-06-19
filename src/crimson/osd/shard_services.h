@@ -420,6 +420,7 @@ private:
 #define FORWARD_CONST(FROM_METHOD, TO_METHOD, TARGET)		\
   template <typename... Args>					\
   auto FROM_METHOD(Args&&... args) const {			\
+    crimson::get_logger(ceph_subsys_osd).error("[FORWARD_CONST] ShardServices::{} my address is {} calling on ShardServices::local_state {}", __func__, fmt::ptr(this), fmt::ptr(&local_state));			\
     return TARGET.TO_METHOD(std::forward<Args>(args)...);	\
   }
 
@@ -466,7 +467,9 @@ public:
     PSSArgs&&... args)
     : local_state(std::forward<PSSArgs>(args)...),
       osd_singleton_state(osd_singleton_state),
-      pg_to_shard_mapping(pg_to_shard_mapping) {}
+      pg_to_shard_mapping(pg_to_shard_mapping) {
+    crimson::get_logger(ceph_subsys_osd).error("ctor called from {} ", fmt::ptr(this));
+      }
 
   FORWARD_TO_OSD_SINGLETON(send_to_osd)
 

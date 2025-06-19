@@ -307,6 +307,9 @@ public:
   template <typename F, typename... Args>
   seastar::future<> invoke_on_each_shard_seq(
     F &&f) const {
+    // can't reproduce when this log line enabled..
+    // seg fault earlier
+    // crimson::get_logger(ceph_subsys_osd).debug("my shard_servies is {} I am {}", fmt::ptr(&shard_services), fmt::ptr(this));
     return sharded_map_seq(
       shard_services,
       [f=std::forward<F>(f)](const ShardServices &local_service) mutable {

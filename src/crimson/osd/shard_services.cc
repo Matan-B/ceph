@@ -51,12 +51,17 @@ PerShardState::PerShardState(
       static_cast<ceph_tid_t>(seastar::this_shard_id()) <<
       (std::numeric_limits<ceph_tid_t>::digits - 8)),
     startup_time(startup_time)
-{}
+{
+    LOG_PREFIX(PerShardState::PerShardState);
+    assert_core();
+    DEBUG("seastar::this_shard {} PerShardState::core {} this_adr: {}", seastar::this_shard_id(), core, fmt::ptr(this));
+}
 
 seastar::future<> PerShardState::dump_ops_in_flight(Formatter *f) const
 {
   LOG_PREFIX(PerShardState::dump_ops_in_flight);
-  DEBUG("");
+  DEBUG("seastar::this_shard {} PerShardState::core {} this_adr: {}", seastar::this_shard_id(), core, fmt::ptr(this));
+  assert_core();
   registry.for_each_op([f](const auto &op) {
     op.dump(f);
   });
