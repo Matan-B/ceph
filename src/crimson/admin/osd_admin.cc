@@ -595,8 +595,13 @@ public:
     fref->open_array_section("ops_in_flight");
     co_await pg_shard_manager.when_active();
     co_await pg_shard_manager.invoke_on_each_shard_seq(
-      [f = fref.get()](const auto &shard_services) {
-        return shard_services.dump_ops_in_flight(f);
+       // either get_mnow / dump_ops_in_flight
+      [FNAME, f = fref.get()](const auto &local_state) -> seastar::future<> {
+        DEBUG("hey");
+        //const auto mnow = local_state.get_mnow();
+        //DEBUG("got {}", mnow);
+        return local_state.dump_ops_in_flight(f);
+        //return seastar::now();
     });
     fref->close_section();
     fref->close_section();
