@@ -331,27 +331,14 @@ public:
     std::unique_ptr<Formatter> fref{Formatter::create(format, "json-pretty", "json-pretty")};
     auto *f = fref.get();
     std::string prefix;
-    cmd_getval(cmdmap, "group", prefix);
-    f->open_object_section("metrics");
-    f->open_array_section("metrics");
-    return seastar::do_with(std::move(prefix), [f](auto &prefix) {
-      return crimson::reactor_map_seq([f, &prefix] {
-        for (const auto& [full_name, metric_family]: seastar::scollectd::get_value_map()) {
-          if (!prefix.empty() && full_name.compare(0, prefix.size(), prefix) != 0) {
-            continue;
-          }
-          for (const auto& [labels, metric] : metric_family) {
-            if (metric && metric->is_enabled()) {
-	      f->open_object_section(""); // enclosed by array
-              DumpMetricsHook::dump_metric_value(f, full_name, *metric, labels.labels());
-	      f->close_section();
-            }
-          }
-        }
-      });
-    }).then([fref = std::move(fref)]() mutable {
-      fref->close_section();
-      fref->close_section();
+    auto ptr = std::make_unique<int>(1);
+    auto *f2 = ptr.get();
+    return crimson::reactor_map_seq([f2] {
+      logger().info("hey");
+      logger().info("hey {}", fmt::ptr(&f2));
+      logger().info("hey {}", *f2);  // <-- shard 1 would print garbage
+      return seastar::now();
+    }).then([fref = std::move(fref),ptr=std::move(ptr)]() mutable {
       return seastar::make_ready_future<tell_result_t>(std::move(fref));
     });
   }
@@ -578,8 +565,13 @@ public:
     auto *f = fref.get();
     f->open_object_section("ops_in_flight");
     f->open_array_section("ops_in_flight");
-    return pg_shard_manager.invoke_on_each_shard_seq([f](const auto &shard_services) {
-      return shard_services.dump_ops_in_flight(f);
+    auto ptr = std::make_unique<int>(1);
+    auto *f2 = ptr.get();
+    return pg_shard_manager.invoke_on_each_shard_seq([](const auto &shard_services) {
+      logger().info("hey");
+      //logger().info("hey {} {}", fmt::ptr(f2));
+      return seastar::now();
+      //return shard_services.dump_ops_in_flight(f);
     }).then([fref=std::move(fref)]() mutable {
       fref->close_section();
       fref->close_section();

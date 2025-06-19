@@ -15,6 +15,7 @@
 #include "common/likely.h"
 #include "crimson/common/errorator.h"
 #include "crimson/common/utility.h"
+#include "crimson/common/log.h"
 
 namespace crimson {
 
@@ -89,8 +90,10 @@ auto reactor_map_seq(F &&f) {
  */
 template <typename T, typename F>
 auto sharded_map_seq(T &t, F &&f) {
+  crimson::get_logger(ceph_subsys_osd).info("sharded_map_seq hey::{}", fmt::ptr(&t));
   return reactor_map_seq(
     [&t, f=std::forward<F>(f)]() mutable {
+      crimson::get_logger(ceph_subsys_osd).info("hey from reactor_map_seq::{}", fmt::ptr(&t));
       return std::invoke(f, t.local());
     });
 }
