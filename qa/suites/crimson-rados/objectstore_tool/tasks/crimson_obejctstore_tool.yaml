@@ -1,0 +1,14 @@
+overrides:
+  ceph:
+    log-ignorelist:
+    - but it is still running
+    - overall HEALTH_
+    - \(OSDMAP_FLAGS\)
+    - \(OSD_
+    - \(PG_
+    - \(OBJECT_
+tasks:
+- crimson_objectstore_tool:
+    objects: 5
+        pgnum: 8
+
