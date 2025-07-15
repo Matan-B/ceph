@@ -319,6 +319,7 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
     for remote in osds.remotes.keys():
         log.debug(remote)
         log.debug(osds.remotes[remote])
+        time.sleep(1200)
         for role in osds.remotes[remote]:
             if not role.startswith("osd."):
                 continue
