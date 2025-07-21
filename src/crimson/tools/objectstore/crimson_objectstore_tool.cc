@@ -1045,7 +1045,7 @@ int main(int argc, const char* argv[])
 
   auto seastar_args_result = get_seastar_args_from_storage(config);
   if (!seastar_args_result) {
-    fmt::print(std::cerr, "Failed to get seastar arguments: {}\n", seastar_args_result.error());
+    fmt::print(std::cerr, "{}\n", seastar_args_result.error());
     return EXIT_FAILURE;
   }
   auto& seastar_args = *seastar_args_result;
