@@ -276,7 +276,7 @@ public:
     if (!obj_json.empty() && obj_json.back() == '\n') {
       obj_json.pop_back();
     }
-    fmt::print(std::cout, R"(["{}",{}])""\n", get_pgid_str_from_coll(coll), obj_json);
+    fmt::println(std::cout, R"(["{}",{}])""", get_pgid_str_from_coll(coll), obj_json);
     return seastar::now();
   }
 };
@@ -321,7 +321,7 @@ static seastar::future<bool> find_shard_for_object(
   auto it = std::find_if(pgs.begin(), pgs.end(),
                          [&config](const auto& pg) { return pg.first == config.coll; });
   if (it == pgs.end()) {
-    fmt::print(std::cerr, "PG '{}' not found for {} object", config.coll, object_type);
+    fmt::println(std::cerr, "PG '{}' not found for {} object", config.coll, object_type);
     co_return false;
   }
   st.set_shard_id(it->second);
@@ -346,10 +346,10 @@ static seastar::future<bool> resolve_operation_parameters(
       co_return true;  // No object resolution needed for list operation
     }
     if (!op.pgid.has_value()) {
-      fmt::print(std::cerr, "PG ID is required for pgmeta operations");
+      fmt::println(std::cerr, "PG ID is required for pgmeta operations");
       co_return false;
     }
-    fmt::print(std::cout, "object name is empty, use pgmeta oid");
+    fmt::println(std::cout, "object name is empty, use pgmeta oid");
     config.ghobj = config.pgid.make_pgmeta_oid();
 
     // Find shard for pgmeta object
@@ -372,7 +372,7 @@ static seastar::future<bool> resolve_operation_parameters(
       // JSON object specification
       config.ghobj = parsed_obj;
       if (!op.pgid.has_value()) {
-        fmt::print(std::cerr, "PG ID is required when object is specified as JSON");
+        fmt::println(std::cerr, "PG ID is required when object is specified as JSON");
         co_return false;
       }
 
@@ -384,11 +384,11 @@ static seastar::future<bool> resolve_operation_parameters(
       co_await action_on_all_objects(st, lookup, op.pgid);
 
       if (lookup.objects.empty()) {
-        fmt::print(std::cerr, "Object '{}' not found. If this object is in a non-default namespace, please specify it with --namespace.", *op.object);
+        fmt::println(std::cerr, "Object '{}' not found. If this object is in a non-default namespace, please specify it with --namespace.", *op.object);
         co_return false;
       }
       if (lookup.objects.size() > 1) {
-        fmt::print(std::cerr, "Found {} objects with name '{}', please specify pgid or use JSON format",
+        fmt::println(std::cerr, "Found {} objects with name '{}', please specify pgid or use JSON format",
                       lookup.objects.size(), *op.object);
         co_return false;
       }
@@ -506,7 +506,7 @@ public:
       return tl::unexpected(superblock_result.error());
     }
 
-    fmt::print(std::cout, "Read shard count from storage: {}", superblock_result->shard_num);
+    fmt::println(std::cout, "Read shard count from storage: {}", superblock_result->shard_num);
     return superblock_result->shard_num;
   }
 };
@@ -540,7 +540,7 @@ get_seastar_args_from_storage(const objectstore_config_t& config)
   seastar_args.emplace_back("--thread-affinity");
   seastar_args.emplace_back("0");
 
-  fmt::print(std::cout, "Using shard configuration from storage: --smp {}", *shard_count_result);
+  fmt::println(std::cout, "Using shard configuration from storage: --smp {}", *shard_count_result);
   return seastar_args;
 }
 
@@ -551,7 +551,7 @@ seastar::future<int> write_output(
   if (file_path.has_value() && *file_path != "-") {
     std::ofstream outfile(file_path.value(), std::ios::binary);
     if (!outfile) {
-      fmt::print(std::cerr, "Failed to open output file '{}'", *file_path);
+      fmt::println(std::cerr, "Failed to open output file '{}'", *file_path);
       return seastar::make_ready_future<int>(EXIT_FAILURE);
     }
     outfile.write(data.data(), data.size());
@@ -568,7 +568,7 @@ tl::expected<std::string, int> read_input(
   if (file_path.has_value() && *file_path != "-") {
     std::ifstream infile(file_path.value(), std::ios::binary);
     if (!infile.is_open()) {
-      fmt::print(std::cerr, "failed to open input-file '{}'", file_path.value());
+      fmt::println(std::cerr, "failed to open input-file '{}'", file_path.value());
       return tl::unexpected(EXIT_FAILURE);
     }
     std::stringstream buffer;
@@ -576,7 +576,7 @@ tl::expected<std::string, int> read_input(
     input_data = buffer.str();
   } else {
     if (isatty(STDIN_FILENO) && (!file_path.has_value() || *file_path != "-")) {
-      fmt::print(std::cerr, "stdin is a tty and no file specified");
+      fmt::println(std::cerr, "stdin is a tty and no file specified");
       return tl::unexpected(EXIT_FAILURE);
     }
     std::stringstream buffer;
@@ -591,7 +591,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     Formatter::create(config.format));
 
   if (!config.operation.has_value()) {
-    fmt::print(std::cerr, "No operation specified");
+    fmt::println(std::cerr, "No operation specified");
     co_return EXIT_FAILURE;
   }
 
@@ -613,7 +613,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         pgid_strs.insert(get_pgid_str_from_coll(pg.first));
       }
       for (const auto& pgid_str : pgid_strs) {
-        fmt::print(std::cout, "{}\n", pgid_str);
+        fmt::println(std::cout, "{}", pgid_str);
       }
       break;
     }
@@ -639,9 +639,9 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         [] (std::string_view key, std::string_view value) {
         if (outistty) {
           std::string cleaned_key = cleanbin_tmp(key);
-          fmt::print(std::cout, "{}\n", cleaned_key);
+          fmt::println(std::cout, "{}", cleaned_key);
         } else {
-          fmt::print(std::cout, "{}\n", key);
+          fmt::println(std::cout, "{}", key);
         }
         return ObjectStore::omap_iter_ret_t::NEXT;
       };
@@ -653,7 +653,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::SET_OMAP: {
       if (!op.key.has_value()) {
-        fmt::print(std::cerr, "key is required for set-omap");
+        fmt::println(std::cerr, "key is required for set-omap");
         co_return EXIT_FAILURE;
       }
 
@@ -666,10 +666,10 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         config.coll, config.ghobj,
         op.key.value(), *omap_value_result);
       if (success) {
-        fmt::print(std::cout, "set omap success: key={}, value size={}\n",
+        fmt::println(std::cout, "set omap success: key={}, value size={}",
           op.key.value(), omap_value_result->size());
       } else {
-        fmt::print(std::cerr, "set omap failed");
+        fmt::println(std::cerr, "set omap failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -677,7 +677,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::GET_OMAP: {
       if (!op.key.has_value()) {
-        fmt::print(std::cerr, "key is required for get-omap");
+        fmt::println(std::cerr, "key is required for get-omap");
         co_return EXIT_FAILURE;
       }
       std::string omap_value = co_await st.get_omap(
@@ -687,16 +687,16 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::RM_OMAP: {
       if (!op.key.has_value()) {
-        fmt::print(std::cerr, "omap-key is required for rm-omap");
+        fmt::println(std::cerr, "omap-key is required for rm-omap");
         co_return EXIT_FAILURE;
       }
       bool success = co_await st.remove_omap(
         config.coll, config.ghobj, op.key.value());
       if (success) {
-        fmt::print(std::cout, "remove omap success: key={}\n",
+        fmt::println(std::cout, "remove omap success: key={}",
           op.key.value());
       } else {
-        fmt::print(std::cerr, "remove omap failed");
+        fmt::println(std::cerr, "remove omap failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -705,7 +705,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     case operation_type_t::LIST_ATTRS: {
       auto attrs_result = co_await st.get_attrs(config.coll, config.ghobj);
       if (!attrs_result) {
-        fmt::print(std::cerr, "Error listing attributes: {}", attrs_result.error());
+        fmt::println(std::cerr, "Error listing attributes: {}", attrs_result.error());
         co_return EXIT_FAILURE;
       }
       const auto& attrs = *attrs_result;
@@ -715,14 +715,14 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         if (outistty) {
           key = cleanbin(key);
         }
-        fmt::print(std::cout, "{}\n", key);
+        fmt::println(std::cout, "{}", key);
       }
       break;
     }
 
     case operation_type_t::SET_ATTR: {
       if (!op.key.has_value()) {
-        fmt::print(std::cerr, "key is required for set-attr");
+        fmt::println(std::cerr, "key is required for set-attr");
         co_return EXIT_FAILURE;
       }
       auto attr_value_result = read_input(op.file);
@@ -733,10 +733,10 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         config.coll, config.ghobj,
         op.key.value(), *attr_value_result);
       if (success) {
-        fmt::print(std::cout, "set attr success: key={}, value size={}\n",
+        fmt::println(std::cout, "set attr success: key={}, value size={}",
           op.key.value(), attr_value_result->size());
       } else {
-        fmt::print(std::cerr, "set attr failed");
+        fmt::println(std::cerr, "set attr failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -744,14 +744,14 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::GET_ATTR: {
       if (!op.key.has_value()) {
-        fmt::print(std::cerr, "key is required for get-attr");
+        fmt::println(std::cerr, "key is required for get-attr");
         co_return EXIT_FAILURE;
       }
       auto attr_result = co_await st.get_attr(
         config.coll, config.ghobj, op.key.value());
 
       if (!attr_result) {
-        fmt::print(std::cerr, "Error reading attribute '{}': {}",
+        fmt::println(std::cerr, "Error reading attribute '{}': {}",
                      op.key.value(), attr_result.error());
         co_return EXIT_FAILURE;
       }
@@ -768,16 +768,16 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::RM_ATTR: {
       if (!op.key.has_value()) {
-        fmt::print(std::cerr, "key is required for rm-attr");
+        fmt::println(std::cerr, "key is required for rm-attr");
         co_return EXIT_FAILURE;
       }
       bool success = co_await st.remove_attr(
         config.coll, config.ghobj, op.key.value());
       if (success) {
-        fmt::print(std::cout, "remove attr success: key={}\n",
+        fmt::println(std::cout, "remove attr success: key={}",
           op.key.value());
       } else {
-        fmt::print(std::cerr, "remove attr failed");
+        fmt::println(std::cerr, "remove attr failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -796,9 +796,9 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
       bool success = co_await st.set_bytes(config.coll, config.ghobj, *object_data_result);
       if (success) {
-        fmt::print(std::cout, "set bytes success: data size={}\n", object_data_result->size());
+        fmt::println(std::cout, "set bytes success: data size={}", object_data_result->size());
       } else {
-        fmt::print(std::cerr, "set bytes failed");
+        fmt::println(std::cerr, "set bytes failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -807,9 +807,9 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     case operation_type_t::REMOVE: {
       bool success = co_await st.remove_object(config.coll, config.ghobj, false, op.force);
       if (success) {
-        fmt::print(std::cout, "remove object success\n");
+        fmt::println(std::cout, "remove object success");
       } else {
-        fmt::print(std::cerr, "remove object failed");
+        fmt::println(std::cerr, "remove object failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -818,9 +818,9 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     case operation_type_t::REMOVEALL: {
       bool success = co_await st.remove_object(config.coll, config.ghobj, true, op.force);
       if (success) {
-        fmt::print(std::cout, "remove object and clones success\n");
+        fmt::println(std::cout, "remove object and clones success");
       } else {
-        fmt::print(std::cerr, "remove object and clones failed");
+        fmt::println(std::cerr, "remove object and clones failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -833,14 +833,14 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::SET_SIZE: {
       if (!op.size.has_value()) {
-        fmt::print(std::cerr, "size is required for set-size");
+        fmt::println(std::cerr, "size is required for set-size");
         co_return EXIT_FAILURE;
       }
       bool success = co_await st.set_object_size(config.coll, config.ghobj, op.size.value());
       if (success) {
-        fmt::print(std::cout, "set object size success: size={}\n", op.size.value());
+        fmt::println(std::cout, "set object size success: size={}", op.size.value());
       } else {
-        fmt::print(std::cerr, "set object size failed");
+        fmt::println(std::cerr, "set object size failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -849,16 +849,16 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     case operation_type_t::CLEAR_DATA_DIGEST: {
       bool success = co_await st.clear_data_digest(config.coll, config.ghobj);
       if (success) {
-        fmt::print(std::cout, "clear data digest success\n");
+        fmt::println(std::cout, "clear data digest success");
       } else {
-        fmt::print(std::cerr, "clear data digest failed");
+        fmt::println(std::cerr, "clear data digest failed");
         co_return EXIT_FAILURE;
       }
       break;
     }
 
     default:
-      fmt::print(std::cerr, "Operation {} not implemented yet", to_string(op.op));
+      fmt::println(std::cerr, "Operation {} not implemented yet", to_string(op.op));
       co_return EXIT_FAILURE;
   }
 
@@ -901,7 +901,7 @@ int main(int argc, const char* argv[])
     bpo::notify(vm);
     ceph_option_strings = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
   } catch (const bpo::error& e) {
-    fmt::print(std::cerr, "Error: {}\n", e.what());
+    fmt::println(std::cerr, "Error: {}", e.what());
     print_usage(desc);
     return EXIT_FAILURE;
   }
@@ -918,7 +918,7 @@ int main(int argc, const char* argv[])
     // Object-level operation
     auto op_result = parse_object_operation(config.objcmd);
     if (!op_result) {
-      fmt::print(std::cerr, "Invalid object command: {}\n", op_result.error());
+      fmt::println(std::cerr, "Invalid object command: {}", op_result.error());
       print_usage(desc);
       return EXIT_FAILURE;
     }
@@ -927,7 +927,7 @@ int main(int argc, const char* argv[])
     if (vm.count("pgid")) {
       auto pgid_result = parse_pgid(config.pgid_str);
       if (!pgid_result) {
-        fmt::print(std::cerr, "Invalid pgid: {}\n", pgid_result.error());
+        fmt::println(std::cerr, "Invalid pgid: {}", pgid_result.error());
         return EXIT_FAILURE;
       }
       pgid = *pgid_result;
@@ -954,7 +954,7 @@ int main(int argc, const char* argv[])
       case operation_type_t::GET_ATTR:
       case operation_type_t::RM_ATTR:
         if (!vm.count("arg1")) {
-          fmt::print(std::cerr, "Missing key for command {}\n", config.objcmd);
+          fmt::println(std::cerr, "Missing key for command {}", config.objcmd);
           return EXIT_FAILURE;
         }
         params.key = config.arg1;
@@ -963,13 +963,13 @@ int main(int argc, const char* argv[])
       case operation_type_t::SET_OMAP:
       case operation_type_t::SET_ATTR:
         if (!vm.count("arg1")) {
-          fmt::print(std::cerr, "Missing key for command {}\n", config.objcmd);
+          fmt::println(std::cerr, "Missing key for command {}", config.objcmd);
           return EXIT_FAILURE;
         }
         params.key = config.arg1;
         if (vm.count("arg2")) {
           if (params.file.has_value()) {
-              fmt::print(std::cerr, "File specified both with --file and positionally, which is ambiguous.\n");
+              fmt::println(std::cerr, "File specified both with --file and positionally, which is ambiguous");
               return EXIT_FAILURE;
           }
           params.file = config.arg2;
@@ -978,13 +978,13 @@ int main(int argc, const char* argv[])
 
       case operation_type_t::SET_SIZE:
         if (!vm.count("arg1")) {
-          fmt::print(std::cerr, "Missing size for command {}\n", config.objcmd);
+          fmt::println(std::cerr, "Missing size for command {}", config.objcmd);
           return EXIT_FAILURE;
         }
         try {
           params.size = std::stoull(config.arg1);
         } catch (const std::exception& e) {
-          fmt::print(std::cerr, "Invalid size '{}': {}\n", config.arg1, e.what());
+          fmt::println(std::cerr, "Invalid size '{}': {}", config.arg1, e.what());
           return EXIT_FAILURE;
         }
         break;
@@ -993,7 +993,7 @@ int main(int argc, const char* argv[])
         // A simple fallback for commands that might take a file argument
         if (vm.count("arg1")) {
             if (params.file.has_value()) {
-              fmt::print(std::cerr, "File specified both with --file and positionally, which is ambiguous.\n");
+              fmt::println(std::cerr, "File specified both with --file and positionally, which is ambiguous");
               return EXIT_FAILURE;
             }
           params.file = config.arg1;
@@ -1005,7 +1005,7 @@ int main(int argc, const char* argv[])
     // PG-level operation
     auto op_result = parse_pg_operation(config.op);
     if (!op_result) {
-      fmt::print(std::cerr, "Invalid operation: {}\n", op_result.error());
+      fmt::println(std::cerr, "Invalid operation: {}", op_result.error());
       print_usage(desc);
       return EXIT_FAILURE;
     }
@@ -1014,7 +1014,7 @@ int main(int argc, const char* argv[])
     if (vm.count("pgid")) {
       auto pgid_result = parse_pgid(config.pgid_str);
       if (!pgid_result) {
-        fmt::print(std::cerr, "Invalid pgid: {}\n", pgid_result.error());
+        fmt::println(std::cerr, "Invalid pgid: {}", pgid_result.error());
         return EXIT_FAILURE;
       }
       pgid = *pgid_result;
@@ -1031,21 +1031,21 @@ int main(int argc, const char* argv[])
       config.force
     };
   } else {
-    fmt::print(std::cerr, "Must provide --op or object command...\n");
+    fmt::println(std::cerr, "Must provide --op or object command...");
     print_usage(desc);
     return EXIT_FAILURE;
   }
 
   // Validate required parameters
   if (!vm.count("data-path")) {
-    fmt::print(std::cerr, "Must provide --data-path\n");
+    fmt::println(std::cerr, "Must provide --data-path");
     print_usage(desc);
     return EXIT_FAILURE;
   }
 
   auto seastar_args_result = get_seastar_args_from_storage(config);
   if (!seastar_args_result) {
-    fmt::print(std::cerr, "{}\n", seastar_args_result.error());
+    fmt::println(std::cerr, "{}", seastar_args_result.error());
     return EXIT_FAILURE;
   }
   auto& seastar_args = *seastar_args_result;
@@ -1097,14 +1097,14 @@ int main(int argc, const char* argv[])
             int ret = run_tool(st, config).get();
             return ret;
           } catch (...) {
-            fmt::print(std::cerr, "startup failed: {}", std::current_exception());
+            fmt::println(std::cerr, "startup failed: {}", std::current_exception());
             return EXIT_FAILURE;
           }
         });
       }
     );
   } catch (...) {
-    fmt::print(std::cerr, "FATAL: Exception during startup, aborting: {}",
+    fmt::println(std::cerr, "FATAL: Exception during startup, aborting: {}",
                std::current_exception());
     return EXIT_FAILURE;
   }
