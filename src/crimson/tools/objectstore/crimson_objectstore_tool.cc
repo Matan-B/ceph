@@ -471,8 +471,21 @@ public:
       bufferlist bl;
       bl.append(buf.data(), block_size);
 
-      crimson::os::seastore::block_sm_superblock_t superblock;
       auto bliter = bl.cbegin();
+
+      // TODO this Signature is only applicable for segment devices(SSD/HDD) not
+      // for other two devices like ZBD/RANDOM_BLOCK_SSD
+      constexpr const char SEASTORE_SUPERBLOCK_SIGN[] = "seastore block device\n";
+      constexpr std::size_t SEASTORE_SUPERBLOCK_SIGN_LEN = sizeof(SEASTORE_SUPERBLOCK_SIGN) - 1;
+
+      // Validate the magic prefix
+      std::string sb_magic;
+      bliter.copy(SEASTORE_SUPERBLOCK_SIGN_LEN, sb_magic);
+      if (sb_magic != SEASTORE_SUPERBLOCK_SIGN) {
+        return tl::unexpected("invalid superblock signature " + block_path);
+      }
+
+      crimson::os::seastore::block_sm_superblock_t superblock;
       decode(superblock, bliter);
 
       ceph_assert(ceph::encoded_sizeof<crimson::os::seastore::block_sm_superblock_t>(superblock) <
