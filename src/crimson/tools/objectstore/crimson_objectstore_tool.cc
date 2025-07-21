@@ -195,7 +195,7 @@ struct objectstore_config_t {
       ("format", bpo::value<std::string>(&format)->default_value("json-pretty"),
        "Output format which may be json, json-pretty, xml, xml-pretty")
       ("debug", bpo::bool_switch(&debug),
-       "Enable diagnostic output to stderr")
+       "Set seastar logger level to debug (default level: error)")
       ("force", bpo::bool_switch(&force),
        "Ignore some types of errors and proceed with operation - USE WITH CAUTION")
       ("tty", bpo::bool_switch(&tty),
@@ -1072,6 +1072,15 @@ int main(int argc, const char* argv[])
             auto stop_conf = seastar::deferred_stop(sharded_conf());
             local_conf().start().get();
             seastar_apps_lib::stop_signal should_stop;
+            if (config.debug) {
+              seastar::global_logger_registry().set_all_loggers_level(
+                seastar::log_level::debug
+              );
+            } else {
+              seastar::global_logger_registry().set_all_loggers_level(
+                seastar::log_level::error
+              );
+            }
             auto store = crimson::os::FuturizedStore::create(
               config.type,
               config.data_path,
