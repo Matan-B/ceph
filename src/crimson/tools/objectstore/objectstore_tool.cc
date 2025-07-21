@@ -19,8 +19,6 @@ namespace crimson {
 namespace tools {
 namespace kvstore {
 
-seastar::logger logger("crimson-objectstore-tool");
-
 seastar::future<> StoreTool::stop()
 {
   co_await store->umount();
@@ -45,7 +43,7 @@ StoreTool::list_objects(const coll_t& cid, ghobject_t next)
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return std::make_tuple(std::vector<ghobject_t>(), ghobject_t::get_max());
     }
     co_return co_await store->get_sharded_store().list_objects(
@@ -69,7 +67,7 @@ StoreTool::omap_iterate(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return;
     }
 
@@ -102,7 +100,7 @@ seastar::future<std::string> StoreTool::get_omap(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return std::string();
     }
 
@@ -136,7 +134,7 @@ seastar::future<bool> StoreTool::set_omap(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     ceph::os::Transaction txn;
@@ -164,7 +162,7 @@ seastar::future<bool> StoreTool::remove_omap(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     ceph::os::Transaction txn;
@@ -188,7 +186,7 @@ seastar::future<std::string> StoreTool::get_bytes(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return std::string();
     }
 
@@ -244,7 +242,7 @@ seastar::future<bool> StoreTool::set_bytes(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
 
@@ -338,7 +336,7 @@ seastar::future<bool> StoreTool::set_attr(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     
@@ -366,7 +364,7 @@ seastar::future<bool> StoreTool::remove_attr(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     
@@ -394,7 +392,7 @@ seastar::future<bool> StoreTool::remove_object(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     
@@ -403,7 +401,7 @@ seastar::future<bool> StoreTool::remove_object(
       [[maybe_unused]] auto stat_result = co_await store->get_sharded_store().stat(coll, oid);
       // Object exists, proceed with removal
     } catch (const std::exception& e) {
-      logger.error("Object {} does not exist or stat failed: {}", oid, e.what());
+      fmt::print(std::cerr, "Object {} does not exist or stat failed: {}", oid, e.what());
       co_return false;
     }
     
@@ -411,20 +409,20 @@ seastar::future<bool> StoreTool::remove_object(
 
     //TODO: Implement proper snapset handling when crimson supports snapshots
     if (all) {
-      logger.info("removeall: removing object {} and all clones", oid);
+      fmt::print(std::cout, "removeall: removing object {} and all clones", oid);
       txn.remove(cid, oid);
       
     } else {
-      logger.info("remove: removing object {}{}", oid, force ? " (forced)" : "");
+      fmt::print(std::cout, "remove: removing object {}{}", oid, force ? " (forced)" : "");
 
       if (oid.hobj.has_snapset() && !force) {
-        logger.warn("Object {} may have snapset - use removeall or force to remove", oid);
+        fmt::print(std::cerr, "Object {} may have snapset - use removeall or force to remove", oid);
       }
       txn.remove(cid, oid);
     }
 
     co_await store->get_sharded_store().do_transaction(coll, std::move(txn));
-    logger.info("Successfully removed object {}", oid);
+    fmt::print(std::cout, "Successfully removed object {}", oid);
     co_return true;
   });
 }
@@ -443,7 +441,7 @@ seastar::future<std::string> StoreTool::dump_object_info(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return std::string();
     }
 
@@ -471,7 +469,7 @@ seastar::future<bool> StoreTool::set_object_size(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     
@@ -496,7 +494,7 @@ seastar::future<bool> StoreTool::clear_data_digest(
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return false;
     }
     
@@ -520,7 +518,7 @@ seastar::future<pg_info_t> StoreTool::get_pg_info(const coll_t& cid)
       return seastar::make_ready_future<FuturizedStore::Shard::CollectionRef>(nullptr);
     });
     if (!coll) {
-      logger.error("Failed to open collection: collection does not exist");
+      fmt::print(std::cerr, "Failed to open collection: collection does not exist");
       co_return pg_info_t();
     }
 

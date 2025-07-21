@@ -19,8 +19,6 @@ namespace crimson {
 namespace tools {
 namespace kvstore {
 
-extern seastar::logger logger;
-
 class StoreTool
 {
 public:

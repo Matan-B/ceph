@@ -316,14 +316,13 @@ static seastar::future<int> action_on_all_objects(
 static seastar::future<bool> find_shard_for_object(
   StoreTool& st,
   objectstore_config_t& config,
-  seastar::logger& logger,
   const std::string& object_type)
 {
   auto pgs = co_await st.list_pgs();
   auto it = std::find_if(pgs.begin(), pgs.end(),
                          [&config](const auto& pg) { return pg.first == config.coll; });
   if (it == pgs.end()) {
-    logger.error("PG '{}' not found for {} object", config.coll, object_type);
+    fmt::print(std::cerr, "PG '{}' not found for {} object", config.coll, object_type);
     co_return false;
   }
   st.set_shard_id(it->second);
@@ -332,8 +331,7 @@ static seastar::future<bool> find_shard_for_object(
 
 static seastar::future<bool> resolve_operation_parameters(
   StoreTool& st,
-  objectstore_config_t& config,
-  seastar::logger& logger)
+  objectstore_config_t& config)
 {
   auto& op = config.operation.value();
 
@@ -349,14 +347,14 @@ static seastar::future<bool> resolve_operation_parameters(
       co_return true;  // No object resolution needed for list operation
     }
     if (!op.pgid.has_value()) {
-      logger.error("PG ID is required for pgmeta operations");
+      fmt::print(std::cerr, "PG ID is required for pgmeta operations");
       co_return false;
     }
-    logger.info("object name is empty, use pgmeta oid");
+    fmt::print(std::cout, "object name is empty, use pgmeta oid");
     config.ghobj = config.pgid.make_pgmeta_oid();
 
     // Find shard for pgmeta object
-    co_return co_await find_shard_for_object(st, config, logger, "pgmeta");
+    co_return co_await find_shard_for_object(st, config, "pgmeta");
   } else {
     // 3. Handle non-empty object specification
     ghobject_t parsed_obj;
@@ -375,23 +373,23 @@ static seastar::future<bool> resolve_operation_parameters(
       // JSON object specification
       config.ghobj = parsed_obj;
       if (!op.pgid.has_value()) {
-        logger.error("PG ID is required when object is specified as JSON");
+        fmt::print(std::cerr, "PG ID is required when object is specified as JSON");
         co_return false;
       }
 
       // Find shard for JSON object
-      co_return co_await find_shard_for_object(st, config, logger, "JSON");
+      co_return co_await find_shard_for_object(st, config, "JSON");
     } else {
       // Object name lookup
       LookupGhobject lookup(*op.object, config.namespace_);
       co_await action_on_all_objects(st, lookup, op.pgid);
 
       if (lookup.objects.empty()) {
-        logger.error("Object '{}' not found. If this object is in a non-default namespace, please specify it with --namespace.", *op.object);
+        fmt::print(std::cerr, "Object '{}' not found. If this object is in a non-default namespace, please specify it with --namespace.", *op.object);
         co_return false;
       }
       if (lookup.objects.size() > 1) {
-        logger.error("Found {} objects with name '{}', please specify pgid or use JSON format",
+        fmt::print(std::cerr, "Found {} objects with name '{}', please specify pgid or use JSON format",
                       lookup.objects.size(), *op.object);
         co_return false;
       }
@@ -496,7 +494,7 @@ public:
       return tl::unexpected(superblock_result.error());
     }
 
-    logger.debug("Read shard count from storage: {}", superblock_result->shard_num);
+    fmt::print(std::cout, "Read shard count from storage: {}", superblock_result->shard_num);
     return superblock_result->shard_num;
   }
 };
@@ -530,19 +528,18 @@ get_seastar_args_from_storage(const objectstore_config_t& config)
   seastar_args.emplace_back("--thread-affinity");
   seastar_args.emplace_back("0");
 
-  logger.debug("Using shard configuration from storage: --smp {}", *shard_count_result);
+  fmt::print(std::cout, "Using shard configuration from storage: --smp {}", *shard_count_result);
   return seastar_args;
 }
 
 seastar::future<int> write_output(
   const std::optional<std::string>& file_path,
-  const std::string& data,
-  seastar::logger& logger)
+  const std::string& data)
 {
   if (file_path.has_value() && *file_path != "-") {
     std::ofstream outfile(file_path.value(), std::ios::binary);
     if (!outfile) {
-      logger.error("Failed to open output file '{}'", *file_path);
+      fmt::print(std::cerr, "Failed to open output file '{}'", *file_path);
       return seastar::make_ready_future<int>(EXIT_FAILURE);
     }
     outfile.write(data.data(), data.size());
@@ -553,14 +550,13 @@ seastar::future<int> write_output(
 }
 
 tl::expected<std::string, int> read_input(
-  const std::optional<std::string>& file_path,
-  seastar::logger& logger)
+  const std::optional<std::string>& file_path)
 {
   std::string input_data;
   if (file_path.has_value() && *file_path != "-") {
     std::ifstream infile(file_path.value(), std::ios::binary);
     if (!infile.is_open()) {
-      logger.error("failed to open input-file '{}'", file_path.value());
+      fmt::print(std::cerr, "failed to open input-file '{}'", file_path.value());
       return tl::unexpected(EXIT_FAILURE);
     }
     std::stringstream buffer;
@@ -568,7 +564,7 @@ tl::expected<std::string, int> read_input(
     input_data = buffer.str();
   } else {
     if (isatty(STDIN_FILENO) && (!file_path.has_value() || *file_path != "-")) {
-      logger.error("stdin is a tty and no file specified");
+      fmt::print(std::cerr, "stdin is a tty and no file specified");
       return tl::unexpected(EXIT_FAILURE);
     }
     std::stringstream buffer;
@@ -583,13 +579,13 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     Formatter::create(config.format));
 
   if (!config.operation.has_value()) {
-    logger.error("No operation specified");
+    fmt::print(std::cerr, "No operation specified");
     co_return EXIT_FAILURE;
   }
 
   // Resolve object and pgid before executing operations
   if (config.operation->op != operation_type_t::LIST_PGS) {
-    bool resolved = co_await resolve_operation_parameters(st, config, logger);
+    bool resolved = co_await resolve_operation_parameters(st, config);
     if (!resolved) {
       co_return EXIT_FAILURE;
     }
@@ -645,11 +641,11 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::SET_OMAP: {
       if (!op.key.has_value()) {
-        logger.error("key is required for set-omap");
+        fmt::print(std::cerr, "key is required for set-omap");
         co_return EXIT_FAILURE;
       }
 
-      auto omap_value_result = read_input(op.file, logger);
+      auto omap_value_result = read_input(op.file);
       if (!omap_value_result) {
         co_return omap_value_result.error();
       }
@@ -661,7 +657,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         fmt::print(std::cout, "set omap success: key={}, value size={}\n",
           op.key.value(), omap_value_result->size());
       } else {
-        logger.error("set omap failed");
+        fmt::print(std::cerr, "set omap failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -669,17 +665,17 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::GET_OMAP: {
       if (!op.key.has_value()) {
-        logger.error("key is required for get-omap");
+        fmt::print(std::cerr, "key is required for get-omap");
         co_return EXIT_FAILURE;
       }
       std::string omap_value = co_await st.get_omap(
         config.coll, config.ghobj, op.key.value());
-      co_return co_await write_output(op.file, omap_value, logger);
+      co_return co_await write_output(op.file, omap_value);
     }
 
     case operation_type_t::RM_OMAP: {
       if (!op.key.has_value()) {
-        logger.error("omap-key is required for rm-omap");
+        fmt::print(std::cerr, "omap-key is required for rm-omap");
         co_return EXIT_FAILURE;
       }
       bool success = co_await st.remove_omap(
@@ -688,7 +684,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         fmt::print(std::cout, "remove omap success: key={}\n",
           op.key.value());
       } else {
-        logger.error("remove omap failed");
+        fmt::print(std::cerr, "remove omap failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -697,7 +693,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
     case operation_type_t::LIST_ATTRS: {
       auto attrs_result = co_await st.get_attrs(config.coll, config.ghobj);
       if (!attrs_result) {
-        logger.error("Error listing attributes: {}", attrs_result.error());
+        fmt::print(std::cerr, "Error listing attributes: {}", attrs_result.error());
         co_return EXIT_FAILURE;
       }
       const auto& attrs = *attrs_result;
@@ -714,10 +710,10 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::SET_ATTR: {
       if (!op.key.has_value()) {
-        logger.error("key is required for set-attr");
+        fmt::print(std::cerr, "key is required for set-attr");
         co_return EXIT_FAILURE;
       }
-      auto attr_value_result = read_input(op.file, logger);
+      auto attr_value_result = read_input(op.file);
       if (!attr_value_result) {
         co_return attr_value_result.error();
       }
@@ -728,7 +724,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         fmt::print(std::cout, "set attr success: key={}, value size={}\n",
           op.key.value(), attr_value_result->size());
       } else {
-        logger.error("set attr failed");
+        fmt::print(std::cerr, "set attr failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -736,14 +732,14 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::GET_ATTR: {
       if (!op.key.has_value()) {
-        logger.error("key is required for get-attr");
+        fmt::print(std::cerr, "key is required for get-attr");
         co_return EXIT_FAILURE;
       }
       auto attr_result = co_await st.get_attr(
         config.coll, config.ghobj, op.key.value());
 
       if (!attr_result) {
-        logger.error("Error reading attribute '{}': {}",
+        fmt::print(std::cerr, "Error reading attribute '{}': {}",
                      op.key.value(), attr_result.error());
         co_return EXIT_FAILURE;
       }
@@ -755,12 +751,12 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
           output_value.push_back('\n');
         }
       }
-      co_return co_await write_output(op.file, output_value, logger);
+      co_return co_await write_output(op.file, output_value);
     }
 
     case operation_type_t::RM_ATTR: {
       if (!op.key.has_value()) {
-        logger.error("key is required for rm-attr");
+        fmt::print(std::cerr, "key is required for rm-attr");
         co_return EXIT_FAILURE;
       }
       bool success = co_await st.remove_attr(
@@ -769,7 +765,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         fmt::print(std::cout, "remove attr success: key={}\n",
           op.key.value());
       } else {
-        logger.error("remove attr failed");
+        fmt::print(std::cerr, "remove attr failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -777,11 +773,11 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::GET_BYTES: {
       std::string object_data = co_await st.get_bytes(config.coll, config.ghobj);
-      co_return co_await write_output(op.file, object_data, logger);
+      co_return co_await write_output(op.file, object_data);
     }
 
     case operation_type_t::SET_BYTES: {
-      auto object_data_result = read_input(op.file, logger);
+      auto object_data_result = read_input(op.file);
       if (!object_data_result) {
         co_return object_data_result.error();
       }
@@ -790,7 +786,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
       if (success) {
         fmt::print(std::cout, "set bytes success: data size={}\n", object_data_result->size());
       } else {
-        logger.error("set bytes failed");
+        fmt::print(std::cerr, "set bytes failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -801,7 +797,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
       if (success) {
         fmt::print(std::cout, "remove object success\n");
       } else {
-        logger.error("remove object failed");
+        fmt::print(std::cerr, "remove object failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -812,7 +808,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
       if (success) {
         fmt::print(std::cout, "remove object and clones success\n");
       } else {
-        logger.error("remove object and clones failed");
+        fmt::print(std::cerr, "remove object and clones failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -820,19 +816,19 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
     case operation_type_t::DUMP: {
       std::string dump_info = co_await st.dump_object_info(config.coll, config.ghobj);
-      co_return co_await write_output(op.file, dump_info, logger);
+      co_return co_await write_output(op.file, dump_info);
     }
 
     case operation_type_t::SET_SIZE: {
       if (!op.size.has_value()) {
-        logger.error("size is required for set-size");
+        fmt::print(std::cerr, "size is required for set-size");
         co_return EXIT_FAILURE;
       }
       bool success = co_await st.set_object_size(config.coll, config.ghobj, op.size.value());
       if (success) {
         fmt::print(std::cout, "set object size success: size={}\n", op.size.value());
       } else {
-        logger.error("set object size failed");
+        fmt::print(std::cerr, "set object size failed");
         co_return EXIT_FAILURE;
       }
       break;
@@ -843,14 +839,14 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
       if (success) {
         fmt::print(std::cout, "clear data digest success\n");
       } else {
-        logger.error("clear data digest failed");
+        fmt::print(std::cerr, "clear data digest failed");
         co_return EXIT_FAILURE;
       }
       break;
     }
 
     default:
-      logger.error("Operation {} not implemented yet", to_string(op.op));
+      fmt::print(std::cerr, "Operation {} not implemented yet", to_string(op.op));
       co_return EXIT_FAILURE;
   }
 
@@ -1064,15 +1060,6 @@ int main(int argc, const char* argv[])
             auto stop_conf = seastar::deferred_stop(sharded_conf());
             local_conf().start().get();
             seastar_apps_lib::stop_signal should_stop;
-            if (config.debug) {
-              seastar::global_logger_registry().set_all_loggers_level(
-                seastar::log_level::debug
-              );
-              logger.set_ostream_enabled(true);
-            } else {
-              logger.set_ostream_enabled(false);
-            }
-
             auto store = crimson::os::FuturizedStore::create(
               config.type,
               config.data_path,
@@ -1089,14 +1076,14 @@ int main(int argc, const char* argv[])
             int ret = run_tool(st, config).get();
             return ret;
           } catch (...) {
-            logger.error("startup failed: {}", std::current_exception());
+            fmt::print(std::cerr, "startup failed: {}", std::current_exception());
             return EXIT_FAILURE;
           }
         });
       }
     );
   } catch (...) {
-    logger.error("FATAL: Exception during startup, aborting: {}",
+    fmt::print(std::cerr, "FATAL: Exception during startup, aborting: {}",
                std::current_exception());
     return EXIT_FAILURE;
   }
