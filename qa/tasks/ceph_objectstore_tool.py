@@ -329,11 +329,13 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
             try:
                 lines = remote.sh(cmd, check_status=False).splitlines()
                 for pgline in lines:
-                    if not pgline:
+                    if not pgline or not pgline.startswith("["):
                         continue
+                    log.info("parsing {_line}".format(_line=pgline))
                     (pg, obj) = json.loads(pgline)
                     name = obj['oid']
                     if name in db:
+                        log.info("found {_name}".format(_name=name))
                         pgswithobjects.add(pg)
                         objsinpg.setdefault(pg, []).append(name)
                         db[name].setdefault("pg2json",
