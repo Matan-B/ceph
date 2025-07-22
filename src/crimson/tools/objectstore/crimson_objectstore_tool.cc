@@ -155,6 +155,7 @@ struct operation_params_t {
 struct objectstore_config_t {
   // Basic parameters
   std::string data_path;
+  std::string device_type;
   std::string type;
   std::string format;
   std::string pgid_str;
@@ -185,6 +186,8 @@ struct objectstore_config_t {
       ("type", bpo::value<std::string>(&type)->default_value("seastore"),
        "store type, seastore is default")
       ("data-path", bpo::value<std::string>(&data_path),
+       "path to object store, mandatory")
+      ("device-type", bpo::value<std::string>(&device_type),
        "path to object store, mandatory")
       ("pgid", bpo::value<std::string>(&pgid_str),
        "PG id, mandatory for info operation")
@@ -438,6 +441,7 @@ void print_usage(const bpo::options_description& desc) {
 class SeastoreMetaReader {
 private:
   std::string m_data_path;
+  std::string m_device_type;
 
   size_t get_filesystem_block_size(const std::string& path) {
     struct stat st;
@@ -448,7 +452,8 @@ private:
   }
 
 public:
-  explicit SeastoreMetaReader(const std::string& path) : m_data_path(path) {}
+  explicit SeastoreMetaReader(const std::string& path, const std::string& device_type) :
+    m_data_path(path), m_device_type(device_type) {}
 
   tl::expected<crimson::os::seastore::block_sm_superblock_t, std::string> load_seastore_superblock() {
     try {
@@ -473,16 +478,18 @@ public:
 
       auto bliter = bl.cbegin();
 
-      // TODO this Signature is only applicable for segment devices(SSD/HDD) not
-      // for other two devices like ZBD/RANDOM_BLOCK_SSD
-      constexpr const char SEASTORE_SUPERBLOCK_SIGN[] = "seastore block device\n";
-      constexpr std::size_t SEASTORE_SUPERBLOCK_SIGN_LEN = sizeof(SEASTORE_SUPERBLOCK_SIGN) - 1;
+      if (m_device_type != "RANDOM_BLOCK_SSD") {
+        // TODO this Signature is only applicable for segment devices(SSD/HDD) not
+        // for other two devices like ZBD/RANDOM_BLOCK_SSD
+        constexpr const char SEASTORE_SUPERBLOCK_SIGN[] = "seastore block device\n";
+        constexpr std::size_t SEASTORE_SUPERBLOCK_SIGN_LEN = sizeof(SEASTORE_SUPERBLOCK_SIGN) - 1;
 
-      // Validate the magic prefix
-      std::string sb_magic;
-      bliter.copy(SEASTORE_SUPERBLOCK_SIGN_LEN, sb_magic);
-      if (sb_magic != SEASTORE_SUPERBLOCK_SIGN) {
-        return tl::unexpected("invalid superblock signature " + block_path);
+        // Validate the magic prefix
+        std::string sb_magic;
+        bliter.copy(SEASTORE_SUPERBLOCK_SIGN_LEN, sb_magic);
+        if (sb_magic != SEASTORE_SUPERBLOCK_SIGN) {
+          return tl::unexpected("invalid superblock signature " + block_path);
+        }
       }
 
       crimson::os::seastore::block_sm_superblock_t superblock;
@@ -513,13 +520,14 @@ public:
 
 static tl::expected<unsigned int, std::string>
 read_shard_count_from_storage(const std::string& data_path,
-                              const std::string& type)
+                              const std::string& type,
+                              const std::string& device_type)
 {
   if (type != "seastore") {
     return tl::unexpected("Store type not supported for shard count reading");
   }
 
-  SeastoreMetaReader meta_reader(data_path);
+  SeastoreMetaReader meta_reader(data_path, device_type);
   return meta_reader.get_shard_count();
 }
 
@@ -527,7 +535,8 @@ static tl::expected<std::vector<std::string>, std::string>
 get_seastar_args_from_storage(const objectstore_config_t& config)
 {
   auto shard_count_result = read_shard_count_from_storage(config.data_path,
-                                                         config.type);
+                                                          config.type,
+                                                          config.device_type);
 
   if (!shard_count_result) {
     return tl::unexpected(shard_count_result.error());
