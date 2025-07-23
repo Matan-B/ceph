@@ -478,6 +478,8 @@ public:
 
       auto bliter = bl.cbegin();
 
+      fmt::println(std::cout, "Device type: {}", m_device_type);
+
       if (m_device_type != "RANDOM_BLOCK_SSD") {
         // TODO this Signature is only applicable for segment devices(SSD/HDD) not
         // for other two devices like ZBD/RANDOM_BLOCK_SSD
