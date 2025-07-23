@@ -478,7 +478,7 @@ public:
 
       auto bliter = bl.cbegin();
 
-      fmt::println(std::cout, "Device type: {}", m_device_type);
+      // fmt::println(std::cout, "Device type: {}", m_device_type);
 
       if (m_device_type != "RANDOM_BLOCK_SSD") {
         // TODO this Signature is only applicable for segment devices(SSD/HDD) not
@@ -515,7 +515,7 @@ public:
       return tl::unexpected(superblock_result.error());
     }
 
-    fmt::println(std::cout, "Read shard count from storage: {}", superblock_result->shard_num);
+    // fmt::println(std::cout, "Read shard count from storage: {}", superblock_result->shard_num);
     return superblock_result->shard_num;
   }
 };
@@ -551,7 +551,7 @@ get_seastar_args_from_storage(const objectstore_config_t& config)
   seastar_args.emplace_back("--thread-affinity");
   seastar_args.emplace_back("0");
 
-  fmt::println(std::cout, "Using shard configuration from storage: --smp {}", *shard_count_result);
+  // fmt::println(std::cout, "Using shard configuration from storage: --smp {}", *shard_count_result);
   return seastar_args;
 }
 
