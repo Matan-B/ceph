@@ -184,11 +184,11 @@ struct objectstore_config_t {
     desc.add_options()
       ("help", "produce help message")
       ("type", bpo::value<std::string>(&type)->default_value("seastore"),
-       "store type, seastore is default")
+       "store type, default: seastore")
       ("data-path", bpo::value<std::string>(&data_path),
        "path to object store, mandatory")
-      ("device-type", bpo::value<std::string>(&device_type),
-       "path to object store, mandatory")
+      ("device-type", bpo::value<std::string>(&device_type)->default_value("SSD"),
+       "path to object store, defualt: SSD")
       ("pgid", bpo::value<std::string>(&pgid_str),
        "PG id, mandatory for info operation")
       ("op", bpo::value<std::string>(&op),
@@ -196,9 +196,9 @@ struct objectstore_config_t {
       ("file", bpo::value<std::string>(&file),
        "path of file to read from or write to")
       ("format", bpo::value<std::string>(&format)->default_value("json-pretty"),
-       "Output format which may be json, json-pretty, xml, xml-pretty")
+       "Output format which may be json, json-pretty, xml, xml-pretty. defualt: json pretty")
       ("debug", bpo::bool_switch(&debug),
-       "Set seastar logger level to debug (default level: error)")
+       "Set seastar logger level to debug. default: error)")
       ("force", bpo::bool_switch(&force),
        "Ignore some types of errors and proceed with operation - USE WITH CAUTION")
       ("tty", bpo::bool_switch(&tty),
