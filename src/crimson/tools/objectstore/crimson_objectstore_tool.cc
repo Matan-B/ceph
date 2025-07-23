@@ -1061,9 +1061,11 @@ int main(int argc, const char* argv[])
   }
   auto& seastar_args = *seastar_args_result;
 
-  seastar::app_template::config app_cfg;
+  seastar::app_template::seastar_options app_cfg;
   app_cfg.name = "crimson-objectstore-tool";
   app_cfg.auto_handle_sigint_sigterm = true;
+  // Only show "Reactor stalled for" above 200ms
+  app_cfg.reactor_opts.blocked_reactor_notify_ms.set_default_value(200);
   seastar::app_template app(std::move(app_cfg));
 
   std::vector<char*> seastar_argv;
