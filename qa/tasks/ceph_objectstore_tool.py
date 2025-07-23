@@ -392,8 +392,10 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
                                 # log.debug("Expected:")
                                 # cat_file(logging.DEBUG, file)
                                 ERRORS += 1
-                            log.debug("Got original data fron get-bytes {_basename} "
-                                      "successfully!".format(_basename=basename))
+                            else:
+                                log.debug("Got original data from get-bytes {_basename} "
+                                          "successfully!".format(_basename=basename))
+
                             remote.run(args="rm -f {getfile}".
                                        format(getfile=GETNAME).split())
 
@@ -422,20 +424,22 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
                             cmd += "get-bytes -".split()
                             try:
                                 output = remote.sh(cmd, wait=True)
-                                filtered_output = [line for line in output.splitlines() if line.startswith('[')]
                                 if data != output:
                                     log.error("Data inconsistent after "
                                               "set-bytes, got:")
                                     log.error(output)
                                     ERRORS += 1
+                                else:
+                                    log.debug("Got data after set-bytes to {_basename} "
+                                              "successfully!".format(_basename=basename))
+
                             except CommandFailedError as e:
                                 log.error("get-bytes after "
                                           "set-bytes ret={ret}".
                                           format(ret=e.exitstatus))
                                 ERRORS += 1
 
-                            log.debug("Got data after set-bytes to {_basename} "
-                                      "successfully!".format(_basename=basename))
+
                             log.debug("Retrning to orginal data".format(_basename=basename))
 
                             cmd = ((prefix + "--pgid {pg}").
