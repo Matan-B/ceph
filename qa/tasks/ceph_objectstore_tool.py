@@ -181,9 +181,6 @@ def task(ctx, config):
     global CRIMSON_DEVICE_TYPE
     CRIMSON = config.get('crimson_objectstore_tool', False)
     log.info('crimson_objectstore_tool is {}...'.format(CRIMSON))
-    if CRIMSON:
-        CRIMSON_DEVICE_TYPE = config.get('seastore_main_device_type', 'SSD')
-        log.info('seastore_main_device_type is {}...'.format(CRIMSON_DEVICE_TYPE))
 
     log.debug(config)
     log.debug(ctx)
@@ -209,6 +206,10 @@ def task(ctx, config):
         time.sleep(10)
     manager.raw_cluster_cmd('osd', 'set', 'noout')
     manager.raw_cluster_cmd('osd', 'set', 'nodown')
+
+    if CRIMSON:
+        CRIMSON_DEVICE_TYPE = manager.get_config('osd', 0, 'seastore_main_device_type')
+        log.info('seastore_main_device_type is {}...'.format(CRIMSON_DEVICE_TYPE))
 
     PGNUM = config.get('pgnum', 12)
     log.info("pgnum: {num}".format(num=PGNUM))
@@ -311,7 +312,7 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
     if CRIMSON:
         prefix = ("sudo ceph-objectstore-tool "
                   "--data-path {fpath} "
-                  "--device-type {device_t}").format(fpath=FSPATH, device_t=CRIMSON_DEVICE_TYPE)
+                  "--device-type {device_t} ").format(fpath=FSPATH, device_t=CRIMSON_DEVICE_TYPE)
     else:
         prefix = ("sudo ceph-objectstore-tool "
                   "--data-path {fpath} "
