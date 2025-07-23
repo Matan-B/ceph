@@ -296,8 +296,8 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
             raise Exception("{pool} has an unexpected type {type}".
                             format(pool=REP_POOL, type=pool_dump["type"]))
 
-    log.info(pgs)
-    log.info(db)
+    log.info("Expected pgs: {_pgs}".format(_pgs=pgs))
+    log.info("Expected : {_db}".format(_db=db))
 
     for osd in manager.get_osd_status()['up']:
         manager.kill_osd(osd)
@@ -346,9 +346,10 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
                           format(ret=e.exitstatus))
                 ERRORS += 1
 
-    log.info(db)
-    log.info(pgswithobjects)
-    log.info(objsinpg)
+    log.info("Finished --op list")
+    log.info("Found: {_db}".format(_db=db))
+    log.info("Found pgs: {_pgswithobjects}".format(_pgswithobjects=pgswithobjects))
+    log.info("Found objects by pgs: {_objsinpg}".format(_objsinpg=objsinpg))
 
     if pool_dump["type"] == ceph_manager.PoolType.REPLICATED:
         # Test get-bytes
@@ -391,10 +392,14 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
                                 # log.debug("Expected:")
                                 # cat_file(logging.DEBUG, file)
                                 ERRORS += 1
+                            log.debug("Got original data fron get-bytes {_basename} "
+                                      "successfully!".format(_basename=basename))
                             remote.run(args="rm -f {getfile}".
                                        format(getfile=GETNAME).split())
 
-                            data = ("put-bytes going into {file}\n".
+                            log.debug("Setting new data to {_basename}".format(_basename=basename))
+
+                            data = ("set-bytes going into {file}\n".
                                     format(file=file))
                             remote.write_file(SETNAME, data)
                             cmd = ((prefix + "--pgid {pg}").
@@ -417,6 +422,7 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
                             cmd += "get-bytes -".split()
                             try:
                                 output = remote.sh(cmd, wait=True)
+                                filtered_output = [line for line in output.splitlines() if line.startswith('[')]
                                 if data != output:
                                     log.error("Data inconsistent after "
                                               "set-bytes, got:")
@@ -427,6 +433,10 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
                                           "set-bytes ret={ret}".
                                           format(ret=e.exitstatus))
                                 ERRORS += 1
+
+                            log.debug("Got data after set-bytes to {_basename} "
+                                      "successfully!".format(_basename=basename))
+                            log.debug("Retrning to orginal data".format(_basename=basename))
 
                             cmd = ((prefix + "--pgid {pg}").
                                    format(id=osdid, pg=pg).split())
