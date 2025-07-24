@@ -432,6 +432,11 @@ chunk_result_t validate_chunk(
   std::list<std::pair<hobject_t, SnapSet>> heads;
   clone_meta_list_t clones;
   for (const auto &oid: object_set) {
+    if (oid.is_snapdir()) {
+      // See ScrubFindRange::run, CEPH_SNAPDIR is used as a marker
+      // get the maximum sorted value. We shouldn't evalute it.
+      continue;
+    }
     object_evaluation_t eval = evaluate_object(policy, oid, in);
     add_object_to_stats(policy, eval, &ret.stats);
     if (eval.inconsistency) {
