@@ -8,7 +8,7 @@
  *
  * Usage should be:
  *
- * crimson-store-bench --store-path <path>
+ * crimson-store-bench --store-path <path> --duration <seconds> --work-load-type <type>
  *
  * where <path> is a directory containing a file block.  block should either
  * be a symlink to an actual block device or a file truncated to an appropriate
