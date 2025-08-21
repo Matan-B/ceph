@@ -391,9 +391,10 @@ RecordSubmitter::submit(
 RecordSubmitter::open_ret
 RecordSubmitter::open(bool is_mkfs)
 {
+  LOG_PREFIX(RecordSubmitter::open);
+  DEBUG("{} opening allocator", get_name());
   return journal_allocator.open(is_mkfs
-  ).safe_then([this](journal_seq_t ret) {
-    LOG_PREFIX(RecordSubmitter::open);
+  ).safe_then([this, FNAME](journal_seq_t ret) {
     DEBUG("{} register metrics", get_name());
     stats = {};
     last_stats = {};

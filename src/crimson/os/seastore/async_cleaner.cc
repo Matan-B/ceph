@@ -1056,6 +1056,8 @@ segment_id_t SegmentCleaner::allocate_segment(
     rewrite_gen_t generation)
 {
   LOG_PREFIX(SegmentCleaner::allocate_segment);
+  DEBUG("{} {} {} {} segments num: {}",type, segment_seq_printer_t{seq}, category,
+        rewrite_gen_printer_t{generation}, segments.get_num_segments());
   assert(seq != NULL_SEG_SEQ);
   ceph_assert(type == segment_type_t::OOL ||
               trimmer != nullptr); // segment_type_t::JOURNAL
@@ -1064,7 +1066,10 @@ segment_id_t SegmentCleaner::allocate_segment(
        ++it) {
     auto seg_id = it->first;
     auto& segment_info = it->second;
+    DEBUG("segment {} / {}", seg_id.device_segment_id(), segments.get_num_segments());
     if (segment_info.is_empty()) {
+      DEBUG("segment {}, {} is available for allocation",
+            seg_id.device_segment_id(), seg_id);
       auto old_usage = calc_utilization(seg_id);
       ceph_assert(is_rewrite_generation(generation, max_rewrite_generation));
       segments.mark_open(seg_id, seq, type, category, generation);

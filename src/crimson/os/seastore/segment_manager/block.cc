@@ -203,15 +203,28 @@ block_sm_superblock_t make_superblock(
   const seastar::stat_data &data)
 {
   LOG_PREFIX(block_make_superblock);
+  DEBUG("{}", device_id_printer_t{device_id});
   using crimson::common::get_conf;
+  size_t size;
 
   auto config_size = get_conf<Option::size_t>(
     "seastore_device_size");
 
-  size_t size = (data.size == 0) ? config_size : data.size;
+  if (data.size) {
+    DEBUG("{} setting size {} from existing stats",
+          device_id_printer_t{device_id}, data.size);
+    size = data.size;
+  } else {
+  DEBUG("{} setting size {} from seastore_device_size",
+        device_id_printer_t{device_id}, data.size);
+   size = config_size;
+  }
 
   auto config_segment_size = get_conf<Option::size_t>(
     "seastore_segment_size");
+  DEBUG("{} setting config_segment_size {} from seastore_segment_size",
+        device_id_printer_t{device_id}, config_segment_size.value);
+
   size_t raw_segments = size / config_segment_size;
   size_t shard_tracker_size = SegmentStateTracker::get_raw_size(
     raw_segments / seastar::smp::count,
@@ -220,6 +233,11 @@ block_sm_superblock_t make_superblock(
   size_t tracker_off = data.block_size;   //superblock
   size_t segments = (size - tracker_off - total_tracker_size) / config_segment_size;
   size_t segments_per_shard = segments / seastar::smp::count;
+
+  DEBUG("{} raw_segments {} shard_tracker_size {} total_tracker_size {}"
+        " tracker_off {} segments {} segments_per_shard {}",
+        device_id_printer_t{device_id}, raw_segments, shard_tracker_size,
+        total_tracker_size, tracker_off, segments, segments_per_shard);
 
   vector<block_shard_info_t> shard_infos(seastar::smp::count);
   for (unsigned int i = 0; i < seastar::smp::count; i++) {
@@ -230,13 +248,13 @@ block_sm_superblock_t make_superblock(
                              + i * segments_per_shard * config_segment_size;
   }
 
-  INFO("{} disk_size=0x{:x}, segment_size=0x{:x}, block_size=0x{:x}",
+  DEBUG("{} disk_size=0x{:x}, segment_size=0x{:x}, block_size=0x{:x}",
        device_id_printer_t{device_id},
        size,
        uint64_t(config_segment_size),
        data.block_size);
   for (unsigned int i = 0; i < seastar::smp::count; i++) {
-    INFO("shard {} infos: {}", i, shard_infos[i]);
+    DEBUG("shard {} infos: {}", i, shard_infos[i]);
   }
 
   return block_sm_superblock_t{
