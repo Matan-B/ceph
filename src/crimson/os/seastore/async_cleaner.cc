@@ -1087,6 +1087,10 @@ segment_id_t SegmentCleaner::allocate_segment(
   ERROR("out of space with {} {} {} {}",
         type, segment_seq_printer_t{seq}, category,
         rewrite_gen_printer_t{generation});
+    DEBUG("segments.get_available_bytes()() {}", segments.get_available_bytes());
+    DEBUG("stats.projected_used_bytes {}", stats.projected_used_bytes);
+    DEBUG("projected_available_ratio {}", get_projected_available_ratio());
+    DEBUG("available_ratio_hard_limit {}", config.available_ratio_hard_limit);
   ceph_abort_msg("seastore device size setting is too small");
   return NULL_SEG_ID;
 }
@@ -1748,13 +1752,13 @@ void SegmentCleaner::release_projected_usage(std::size_t projected_usage)
 
 bool SegmentCleaner::should_block_io_on_clean() const {
   LOG_PREFIX(SegmentCleaner::should_block_io_on_clean);
-  assert(background_callback->is_ready());
-  auto aratio = get_projected_available_ratio();
-  if (aratio < config.available_ratio_hard_limit) {
     DEBUG("segments.get_available_bytes()() {}", segments.get_available_bytes());
     DEBUG("stats.projected_used_bytes {}", stats.projected_used_bytes);
     DEBUG("projected_available_ratio {}", get_projected_available_ratio());
     DEBUG("available_ratio_hard_limit {}", config.available_ratio_hard_limit);
+  assert(background_callback->is_ready());
+  auto aratio = get_projected_available_ratio();
+  if (aratio < config.available_ratio_hard_limit) {
     // we should block, check if available segments
   if (get_segments_reclaimable() == 0) {
     ceph_abort_msg("NO RECLAIMABLE SEGMENTS, dont block");
