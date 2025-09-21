@@ -534,19 +534,6 @@ BlockSegmentManager::mkfs_ret BlockSegmentManager::primary_mkfs(
     std::ignore = device.close();
   });
   sb = make_superblock(get_device_id(), sm_config, stat);
-  rewrite_gen_t hot_tier_generations = crimson::common::get_conf<uint64_t>(
-    "seastore_hot_tier_generations");
-  rewrite_gen_t cold_tier_generations = crimson::common::get_conf<uint64_t>(
-    "seastore_cold_tier_generations");
-  if (std::cmp_less(sb.shard_infos[0].segments,
-                    (hot_tier_generations + cold_tier_generations + 1))) {
-    // TODO: cold device might not be used, for now assume it would be
-    ERROR("Not enough available segments to open! "
-          "Consider increasing the device size (needed {} got {})",
-          (hot_tier_generations + cold_tier_generations + 1),
-          sb.shard_infos[0].segments);
-    co_await mkfs_ertr::future<>(crimson::ct_error::enoent::make());
-  }
   stats.metadata_write.increment(ceph::encoded_sizeof<block_sm_superblock_t>(sb));
   co_await write_superblock(get_device_id(), device, sb);
   INFO("{} complete", device_id_printer_t{get_device_id()});

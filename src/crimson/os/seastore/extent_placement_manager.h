@@ -754,10 +754,10 @@ private:
       trimmer->reset();
       stats = {};
       register_metrics();
-      return main_cleaner->mount(
-      ).safe_then([this] {
-        return has_cold_tier() ? cold_cleaner->mount() : mount_ertr::now();
-      });
+      co_await main_cleaner->mount();
+      if (has_cold_tier()) {
+        co_await cold_cleaner->mount();
+      }
     }
 
     void start_scan_space() {
