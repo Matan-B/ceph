@@ -584,6 +584,18 @@ void ExtentPlacementManager::BackgroundProcess::log_state(const char *caller) co
   }
 }
 
+ExtentPlacementManager::mount_ret ExtentPlacementManager::BackgroundProcess::mount() {
+  ceph_assert(state == state_t::STOP);
+  state = state_t::MOUNT;
+  trimmer->reset();
+  stats = {};
+  register_metrics();
+  co_await main_cleaner->mount();
+  if (has_cold_tier()) {
+    co_await cold_cleaner->mount();
+  }
+}
+
 void ExtentPlacementManager::BackgroundProcess::start_background()
 {
   LOG_PREFIX(BackgroundProcess::start_background);
