@@ -448,7 +448,7 @@ ExtentPlacementManager::open_ertr::future<>
 ExtentPlacementManager::open_for_write()
 {
   LOG_PREFIX(ExtentPlacementManager::open_for_write);
-  INFO("started with {} devices", num_devices);
+  DEBUG("started with {} devices", num_devices);
   ceph_assert(primary_device != nullptr);
   return crimson::do_for_each(data_writers_by_gen, [](auto &writer) {
     if (writer) {
