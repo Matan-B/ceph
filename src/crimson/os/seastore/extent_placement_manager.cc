@@ -450,19 +450,18 @@ ExtentPlacementManager::open_for_write()
   LOG_PREFIX(ExtentPlacementManager::open_for_write);
   DEBUG("started with {} devices", num_devices);
   ceph_assert(primary_device != nullptr);
-  return crimson::do_for_each(data_writers_by_gen, [](auto &writer) {
+  DEBUG("opening DATA writers", num_devices);
+  for (auto& writer : data_writers_by_gen) {
     if (writer) {
-      return writer->open();
+      co_await writer->open();
     }
-    return open_ertr::now();
-  }).safe_then([this] {
-    return crimson::do_for_each(md_writers_by_gen, [](auto &writer) {
-      if (writer) {
-	return writer->open();
-      }
-      return open_ertr::now();
-    });
-  });
+  }
+  DEBUG("opening METADATA writers", num_devices);
+  for (auto& writer : md_writers_by_gen) {
+    if (writer) {
+      co_await writer->open();
+    }
+  }
 }
 
 ExtentPlacementManager::dispatch_result_t
