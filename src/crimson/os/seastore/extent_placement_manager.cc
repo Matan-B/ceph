@@ -588,15 +588,20 @@ ExtentPlacementManager::mount_ret ExtentPlacementManager::BackgroundProcess::mou
   LOG_PREFIX(BackgroundProcess::mount);
   DEBUG("start");
   ceph_assert(state == state_t::STOP);
+  rewrite_gen_t total_tier_generations;
   state = state_t::MOUNT;
   trimmer->reset();
   stats = {};
   register_metrics();
   DEBUG("mounting main cleaner");
   co_await main_cleaner->mount();
+  total_tier_generations +=
+    crimson::common::get_conf<uint64_t>("seastore_hot_tier_generations");
   if (has_cold_tier()) {
     DEBUG("mounting cold cleaner");
     co_await cold_cleaner->mount();
+    total_tier_generations +=
+      crimson::common::get_conf<uint64_t>("seastore_cold_tier_generations");
   }
 }
 
