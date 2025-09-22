@@ -450,6 +450,21 @@ ExtentPlacementManager::open_for_write()
   LOG_PREFIX(ExtentPlacementManager::open_for_write);
   DEBUG("started with {} devices", num_devices);
   ceph_assert(primary_device != nullptr);
+  // explain me
+
+  if (trimmer->get_backend_type() == backend_type_t::SEGMENTED)
+  auto total_writers_num =
+    data_writers_by_gen.size() + md_writers_by_gen.size();
+  if (auto segments = background_process.get_segments();
+      segments &&
+      std::cmp_less(segments->get_num_empty(), total_writers_num)) {
+    ERROR("Not enough EMPTY segments to open! ");
+    //      "Consider increasing the device size (needed {} got {})",
+    //  (total_tier_generations + 1),
+    //  sb.shard_infos[0].segments);
+    //co_await mkfs_ertr::future<>(crimson::ct_error::enoent::make());
+  }
+
   DEBUG("opening DATA writers", num_devices);
   for (auto& writer : data_writers_by_gen) {
     if (writer) {
@@ -602,6 +617,9 @@ ExtentPlacementManager::mount_ret ExtentPlacementManager::BackgroundProcess::mou
     total_tier_generations +=
       crimson::common::get_conf<uint64_t>("seastore_cold_tier_generations");
   }
+
+  // check here if there are enough
+
 }
 
 void ExtentPlacementManager::BackgroundProcess::start_background()

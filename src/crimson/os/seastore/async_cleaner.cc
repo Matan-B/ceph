@@ -1504,6 +1504,7 @@ SegmentCleaner::mount_ret SegmentCleaner::mount()
       crimson::ct_error::assert_all{"unexpected error"}
     );
   }).safe_then([this, FNAME] {
+        // available segments.get_num_segments()
     INFO("done, {}", segments);
   });
 }

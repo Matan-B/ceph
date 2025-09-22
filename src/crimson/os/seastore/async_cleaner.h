@@ -125,6 +125,10 @@ public:
     return segments.end();
   }
 
+  bool is_empty() const {
+    return segments.size() == 0;
+  }
+
   std::size_t get_num_segments() const {
     assert(segments.size() > 0);
     return segments.size();
@@ -1183,6 +1187,8 @@ public:
 
   virtual void set_extent_callback(ExtentCallbackInterface *) = 0;
 
+  virtual std::optional<const segments_info_t*> get_segments() const = 0;
+
   virtual store_statfs_t get_stat() const = 0;
 
   virtual void print(std::ostream &, bool is_detailed) const = 0;
@@ -1348,6 +1354,10 @@ public:
 
   void set_extent_callback(ExtentCallbackInterface *cb) final {
     extent_callback = cb;
+  }
+
+  std::optional<const segments_info_t*> get_segments() const final {
+   return &segments;
   }
 
   store_statfs_t get_stat() const final {
@@ -1710,6 +1720,10 @@ public:
 
   void set_extent_callback(ExtentCallbackInterface *cb) final {
     extent_callback = cb;
+  }
+
+  std::optional<const segments_info_t*> get_segments() const final {
+   return std::nullopt;
   }
 
   store_statfs_t get_stat() const final {
