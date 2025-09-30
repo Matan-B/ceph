@@ -1159,6 +1159,13 @@ private:
     return cache->can_drop_backref();
   }
 
+  using LBACursorRef = lba::LBACursorRef;
+  using resolve_cursor_to_mapping_iertr = base_iertr;
+  resolve_cursor_to_mapping_iertr::future<LBAMapping>
+  resolve_cursor_to_mapping(
+    Transaction &t,
+    LBACursorRef cursor);
+
   using LBALeafNode = lba::LBALeafNode;
   struct unlinked_child_t {
     LBAMapping mapping;
