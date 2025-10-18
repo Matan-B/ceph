@@ -751,10 +751,9 @@ BtreeLBAManager::update_mapping(
       "Invalid error in BtreeLBAManager::update_mapping"
     }
   );
-  assert(res.is_alive_mapping());
   DEBUGT("laddr={}, paddr {}~0x{:x} => {}~0x{:x}, crc=0x{:x} done -- {}",
-	 t, laddr, prev_addr, prev_len, addr, len, checksum, res.get_cursor());
-  co_return res.get_cursor().get_refcount();
+	 t, laddr, prev_addr, prev_len, addr, len, checksum, *cursor);
+  co_return res->get_refcount();
 }
 
 BtreeLBAManager::update_mappings_ret
@@ -808,7 +807,7 @@ BtreeLBAManager::update_mappings(
 		    checksum, FNAME](auto res) {
 	      DEBUGT("paddr {}~0x{:x} => {}, crc=0x{:x} done -- {}",
 		     c.trans, prev_addr, len,
-		     addr, checksum, res.get_cursor());
+		     addr, checksum, *res);
 	      return update_mapping_iertr::make_ready_future();
 	    },
 	    update_mapping_iertr::pass_further{},
@@ -890,8 +889,7 @@ BtreeLBAManager::_update_mapping(
       c,
       iter
     );
-    co_return update_mapping_ret_bare_t{
-      laddr, std::move(ret), iter.get_cursor(c)};
+    co_return iter.get_cursor(c);
   } else {
     iter = co_await btree.update(
       c,
@@ -907,7 +905,7 @@ BtreeLBAManager::_update_mapping(
 	    && nextent->peek_parent_node().get() == iter.get_leaf_node().get()));
     LBACursorRef cursor = iter.get_cursor(c);
     assert(!cursor->is_end());
-    co_return update_mapping_ret_bare_t{std::move(cursor)};
+    co_return cursor;
   }
 }
 
