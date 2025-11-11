@@ -1575,6 +1575,7 @@ popd
 
 %if 0%{with crimson}
 mv %{buildroot}%{_bindir}/crimson-osd %{buildroot}%{_bindir}/ceph-osd-crimson
+mv %{buildroot}%{_bindir}/crimson-objectstore-tool %{buildroot}%{_bindir}/ceph-objectstore-tool
 %endif
 mv %{buildroot}%{_bindir}/ceph-osd %{buildroot}%{_bindir}/ceph-osd-classic
 
