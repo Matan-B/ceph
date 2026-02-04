@@ -24,11 +24,16 @@
 
 namespace crimson::os::seastore {
 
+namespace lba {
+  class BtreeLBAManager;
+}
 /**
  * Abstract interface for managing the logical to physical mapping
  */
 class LBAManager {
 public:
+  using LBACursorRef = lba::LBACursorRef;
+  using LBACursor = lba::LBACursor;
   using mkfs_iertr = base_iertr;
   using mkfs_ret = mkfs_iertr::future<>;
   virtual mkfs_ret mkfs(
