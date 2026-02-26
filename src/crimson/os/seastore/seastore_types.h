@@ -2232,6 +2232,12 @@ struct segment_tail_t {
 };
 std::ostream &operator<<(std::ostream &out, const segment_tail_t &tail);
 
+enum class overlayed_op_type_t : uint8_t {
+  INSERT = 0,
+  UPDATE,
+  REMOVE
+};
+
 enum class transaction_type_t : uint8_t {
   MUTATE = 0,
   READ, // including weak and non-weak read transactions

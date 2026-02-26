@@ -21,6 +21,7 @@
 #include "crimson/os/seastore/cache.h"
 
 #include "crimson/os/seastore/lba/lba_btree_node.h"
+#include "crimson/os/seastore/lba/btree_lba_overlay.h"
 #include "crimson/os/seastore/btree/btree_types.h"
 
 namespace crimson::os::seastore {
@@ -29,10 +30,6 @@ class LogicalCachedExtent;
 
 namespace crimson::os::seastore::lba {
 class BtreeLBAManager;
-
-using LBABtree = FixedKVBtree<
-  laddr_t, lba_map_val_t, LBAInternalNode,
-  LBALeafNode, LBACursor, LBA_BLOCK_SIZE>;
 
 /**
  * BtreeLBAManager
