@@ -620,6 +620,10 @@ public:
   }
 
   btree_cursor_stats_t cursor_stats;
+
+  // all the txn needs to know is that *an* overlay exists
+  std::unordered_set<laddr_t> txn_overlaid_cursors;
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();
