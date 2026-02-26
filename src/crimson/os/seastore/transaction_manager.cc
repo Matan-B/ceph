@@ -139,7 +139,7 @@ TransactionManager::mount()
         if (is_backref_node(e->get_type())) {
           return backref_manager->init_cached_extent(t, e);
         } else {
-          return lba_manager->init_cached_extent(t, e);
+          return lba_manager->init_cached_extent_overlay(t, e);
         }
       }).si_then([this, &t] {
         epm->start_scan_space();

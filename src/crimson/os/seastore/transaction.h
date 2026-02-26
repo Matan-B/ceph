@@ -620,6 +620,40 @@ public:
   }
 
   btree_cursor_stats_t cursor_stats;
+
+  enum class op_type {
+    mkfs,
+    init_cached_extent,
+    alloc_extent,
+    alloc_extents,
+    clone_mapping,
+    reserve_region,
+    rewrite_extent,
+    get_physical_extent_if_live,
+    update_refcount,
+    update_mappings
+  };
+
+  using overlay_value_t = std::variant<
+    std::monostate,
+    int,
+    paddr_t
+    // todo
+  >;
+
+  struct overlay_entry {
+    op_type op;
+    overlay_value_t value;
+  };
+
+  // we might have 2 entries for the same laadr_t
+  // we shouldn't care, overwrite and use the latest ones
+  std::unordered_map<laddr_t, overlay_entry> overlay_map;
+
+  // maintain serilized order
+  // todo, is this needed
+  std::queue<laddr_t> overlay_order;
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();

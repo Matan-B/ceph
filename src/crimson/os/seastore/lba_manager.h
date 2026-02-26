@@ -28,6 +28,7 @@ namespace crimson::os::seastore {
  * Abstract interface for managing the logical to physical mapping
  */
 class LBAManager {
+
 public:
   using mkfs_iertr = base_iertr;
   using mkfs_ret = mkfs_iertr::future<>;
@@ -48,9 +49,16 @@ public:
     Transaction &t,
     laddr_t offset,
     bool search_containing = false) = 0;
+  get_cursor_ret get_cursor_overlay(
+    Transaction &t,
+    laddr_t offset,
+    bool search_containing = false);
   virtual get_cursor_ret get_cursor(
     Transaction &t,
     LogicalChildNode &extent) = 0;
+  get_cursor_ret get_cursor_overlay(
+    Transaction &t,
+    LogicalChildNode &extent);
 
 #ifdef UNIT_TESTS_BUILT
   using get_end_mapping_iertr = base_iertr;
@@ -136,6 +144,13 @@ public:
     Transaction &t,
     LBACursorRef cursor,
     int delta) = 0;
+
+  ref_iertr::future<LBACursorRef> update_mapping_refcount_overlay(
+    Transaction &t,
+    LBACursorRef cursor,
+    int delta);
+
+  [[deprecated("no users, use cursor overload instead")]]
   ref_iertr::future<> update_mapping_refcount(
     Transaction &t,
     laddr_t addr,
@@ -143,6 +158,7 @@ public:
     auto cursor = co_await get_cursor(t, addr);
     co_await update_mapping_refcount(t, cursor, delta);
   }
+
 
   struct remap_entry_t {
     extent_len_t offset;
@@ -183,6 +199,9 @@ public:
   virtual init_cached_extent_ret init_cached_extent(
     Transaction &t,
     CachedExtentRef e) = 0;
+  init_cached_extent_ret init_cached_extent_overlay(
+    Transaction &t,
+    CachedExtentRef e);
 
 #ifdef UNIT_TESTS_BUILT
   using check_child_trackers_ret = base_iertr::future<>;
@@ -271,6 +290,9 @@ public:
   virtual scan_mapped_space_ret scan_mapped_space(
     Transaction &t,
     scan_mapped_space_func_t &&f) = 0;
+  scan_mapped_space_ret scan_mapped_space_overlay(
+    Transaction &t,
+    scan_mapped_space_func_t &&f);
 
   virtual ~LBAManager() {}
 };

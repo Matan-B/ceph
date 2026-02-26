@@ -243,6 +243,7 @@ struct BtreeCursor
   key_t key;
   std::optional<val_t> val;
   btreenode_pos_t pos;
+  bool overlay = false;
 
   // NOTE: The overhead of calling is_viewable() might be not negligible in the
   // case of the parent extent is stable and shared by multiple transactions.
@@ -296,6 +297,15 @@ struct LBACursor : BtreeCursor<laddr_t, lba::lba_map_val_t> {
     assert(!is_end());
     assert(is_direct() || val->refcount <= 1);
     return val->refcount;
+  }
+
+  bool is_overlay() {
+    return overlay;
+  }
+
+  void set_overlay() {
+    // actaully get overlaid value and expose it
+    overlay = true;
   }
 
   base_iertr::future<> refresh();
