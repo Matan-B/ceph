@@ -14,6 +14,7 @@
 #include "crimson/os/seastore/ordering_handle.h"
 #include "crimson/os/seastore/root_block.h"
 #include "crimson/os/seastore/seastore_types.h"
+#include "crimson/os/seastore/lba_types.h"
 
 namespace crimson::os::seastore {
 
@@ -620,6 +621,9 @@ public:
   }
 
   btree_cursor_stats_t cursor_stats;
+
+  std::unordered_map<laddr_t, LBAOverlayCursor> overlaid_cursors;
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();

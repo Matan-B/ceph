@@ -5,6 +5,7 @@
 #include "crimson/os/seastore/lba/lba_btree_node.h"
 #include "crimson/os/seastore/backref/backref_tree_node.h"
 #include "crimson/os/seastore/lba/btree_lba_manager.h"
+#include "crimson/os/seastore/logical_child_node.h"
 
 namespace crimson::os::seastore {
 
