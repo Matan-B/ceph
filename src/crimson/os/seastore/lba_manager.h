@@ -24,10 +24,18 @@
 
 namespace crimson::os::seastore {
 
+enum class op_type { insert = 0, update, remove};
+//init, refcount_inc, refcount_dec };
+
 /**
  * Abstract interface for managing the logical to physical mapping
  */
 class LBAManager {
+private:
+
+std::unordered_map<laddr_t, op_type> overlay_map;
+std::queue<laddr_t> overlay_order;
+
 public:
   using mkfs_iertr = base_iertr;
   using mkfs_ret = mkfs_iertr::future<>;
@@ -48,9 +56,16 @@ public:
     Transaction &t,
     laddr_t offset,
     bool search_containing = false) = 0;
+  get_cursor_ret get_cursor_overlay(
+    Transaction &t,
+    laddr_t offset,
+    bool search_containing = false);
   virtual get_cursor_ret get_cursor(
     Transaction &t,
     LogicalChildNode &extent) = 0;
+  get_cursor_ret get_cursor_overlay(
+    Transaction &t,
+    LogicalChildNode &extent);
 
 #ifdef UNIT_TESTS_BUILT
   using get_end_mapping_iertr = base_iertr;
@@ -183,6 +198,9 @@ public:
   virtual init_cached_extent_ret init_cached_extent(
     Transaction &t,
     CachedExtentRef e) = 0;
+  init_cached_extent_ret init_cached_extent_overlay(
+    Transaction &t,
+    CachedExtentRef e);
 
 #ifdef UNIT_TESTS_BUILT
   using check_child_trackers_ret = base_iertr::future<>;
@@ -271,6 +289,9 @@ public:
   virtual scan_mapped_space_ret scan_mapped_space(
     Transaction &t,
     scan_mapped_space_func_t &&f) = 0;
+  scan_mapped_space_ret scan_mapped_space_overlay(
+    Transaction &t,
+    scan_mapped_space_func_t &&f);
 
   virtual ~LBAManager() {}
 };
