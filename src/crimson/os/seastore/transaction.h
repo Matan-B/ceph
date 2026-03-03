@@ -620,6 +620,12 @@ public:
   }
 
   btree_cursor_stats_t cursor_stats;
+
+  enum class op_type { insert = 0, update, remove};
+  //init, refcount_inc, refcount_dec };
+  std::unordered_map<laddr_t, op_type> overlay_map;
+  std::queue<laddr_t> overlay_order;
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();

@@ -24,17 +24,10 @@
 
 namespace crimson::os::seastore {
 
-enum class op_type { insert = 0, update, remove};
-//init, refcount_inc, refcount_dec };
-
 /**
  * Abstract interface for managing the logical to physical mapping
  */
 class LBAManager {
-private:
-
-std::unordered_map<laddr_t, op_type> overlay_map;
-std::queue<laddr_t> overlay_order;
 
 public:
   using mkfs_iertr = base_iertr;
