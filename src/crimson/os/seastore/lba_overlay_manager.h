@@ -82,7 +82,7 @@ private:
   LBAManagerRef lba_manager;
   std::unordered_map<laddr_t, LBAOverlayCursor> overlaid_cursors;
 
-  LBAOverlayCursor apply_overlay(
+  void apply_overlay(
     LBACursorRef cursor,
     Transaction &t,
     overlay_entry entry);
@@ -114,14 +114,13 @@ public:
     int delta);
 
   using alloc_extent_iertr = base_iertr;
-  /*
+
   using alloc_extents_ret = alloc_extent_iertr::future<
     std::vector<LBACursorRef>>;
   alloc_extents_ret alloc_extents(
     Transaction &t,
     LBACursorRef cursor,
     std::vector<LogicalChildNodeRef> ext);
-  */
 
   using alloc_extent_ret = alloc_extent_iertr::future<LBACursorRef>;
   alloc_extent_ret alloc_extent(

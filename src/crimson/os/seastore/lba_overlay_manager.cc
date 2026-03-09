@@ -16,7 +16,7 @@ LBAOverlayManagerRef LBAOverlayManager::create_lba_overlay_manager(Cache &cache)
     return LBAOverlayManagerRef(new LBAOverlayManager(std::move(lba_manager)));
 }
 
-LBAOverlayCursor LBAOverlayManager::apply_overlay(
+void LBAOverlayManager::apply_overlay(
   LBACursorRef cursor,
   Transaction &t,
   overlay_entry entry) {
@@ -40,7 +40,6 @@ LBAOverlayCursor LBAOverlayManager::apply_overlay(
         break;
   }
   overlaid_cursors[cursor->get_laddr()] = overlaid_cursor;
-  return overlaid_cursor;
 }
 
 LBAOverlayManager::get_cursor_ret LBAOverlayManager::get_cursor(
@@ -68,26 +67,27 @@ LBAOverlayManager::get_cursor_iertr::future<LBAOverlayCursor> LBAOverlayManager:
   auto overlaid_refcount = cursor->get_refcount();
   ceph_assert((int)overlaid_refcount + delta >= 0);
   overlaid_refcount += delta;
-  co_return apply_overlay(
+  apply_overlay(
     cursor,
     t,
     overlay_entry{op_type::update_refcount,
                   overlaid_refcount});
+  co_return overlaid_cursors[cursor->get_laddr()];
 }
 
-/*
 LBAOverlayManager::alloc_extents_ret LBAOverlayManager::alloc_extents(
   Transaction &t,
   LBACursorRef cursor,
   std::vector<LogicalChildNodeRef> ext) {
   LOG_PREFIX(LBAOverlayManager::alloc_extents);
   DEBUGT("{} ...", t, cursor->get_laddr());
-  co_return apply_overlay(
+  apply_overlay(
     cursor,
     t,
     overlay_entry{op_type::alloc_extents, ext});
+  std::vector<LBACursorRef> tmp;
+  co_return tmp;
 }
-*/
 
 LBAOverlayManager::alloc_extent_ret LBAOverlayManager::alloc_extent(
   Transaction &t,
