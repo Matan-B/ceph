@@ -302,25 +302,6 @@ struct LBACursor : BtreeCursor<laddr_t, lba::lba_map_val_t> {
 };
 using LBACursorRef = boost::intrusive_ptr<LBACursor>;
 
-struct LBAOverlayCursor {
-private:
-  // this could be null for newly inserted ones
-  LBACursorRef base_cursor;
-  extent_ref_count_t overlaid_refcount;
-
-public:
-  LBAOverlayCursor(LBACursorRef base_cursor) : base_cursor(base_cursor) {}
-  LBAOverlayCursor() = default;
-
-  // we can do weird stuff here like:
-  void set_refcount(extent_ref_count_t delta) {
-    overlaid_refcount = delta;
-  }
-
-  extent_ref_count_t get_refcount() const {
-    return overlaid_refcount;
-  }
-};
 
 struct BackrefCursor : BtreeCursor<paddr_t, backref::backref_map_val_t> {
   using Base = BtreeCursor<paddr_t, backref::backref_map_val_t>;

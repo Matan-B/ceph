@@ -31,11 +31,14 @@ void LBAOverlayManager::apply_overlay(
   switch (entry.op) {
       case op_type::update_refcount: {
         auto overlaid_refcount = expect_value<extent_ref_count_t>(entry.value);
-        overlaid_cursor.set_refcount(overlaid_refcount);
+        overlaid_cursor.set_overlay(&LBAOverlayCursor::overlaid_refcount, overlaid_refcount);
         break;
       }
-      case op_type::alloc_extents:
+      case op_type::alloc_extents: {
+        auto alloc_extents = expect_value<std::vector<LogicalChildNodeRef>>(entry.value);
+        overlaid_cursor.set_overlay(&LBAOverlayCursor::alloc_extents, alloc_extents);
         break;
+      }
       default:
         break;
   }
@@ -85,7 +88,8 @@ LBAOverlayManager::alloc_extents_ret LBAOverlayManager::alloc_extents(
     cursor,
     t,
     overlay_entry{op_type::alloc_extents, ext});
-  std::vector<LBACursorRef> tmp;
+  std::vector<LBAOverlayCursor> tmp;
+  // create the tmp vector based on the Overlaied cursors
   co_return tmp;
 }
 

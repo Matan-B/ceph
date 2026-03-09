@@ -20,6 +20,7 @@
 #include "crimson/os/seastore/cache.h"
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/lba_mapping.h"
+#include "crimson/os/seastore/lba_types.h"
 #include "crimson/os/seastore/logical_child_node.h"
 
 #include "crimson/os/seastore/lba_manager.h"
@@ -116,7 +117,7 @@ public:
   using alloc_extent_iertr = base_iertr;
 
   using alloc_extents_ret = alloc_extent_iertr::future<
-    std::vector<LBACursorRef>>;
+    std::vector<LBAOverlayCursor>>;
   alloc_extents_ret alloc_extents(
     Transaction &t,
     LBACursorRef cursor,
