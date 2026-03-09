@@ -7,12 +7,43 @@
 
 #include "crimson/common/log.h"
 
-#include "crimson/os/seastore/cached_extent.h"
 #include "crimson/os/seastore/seastore_types.h"
-#include "crimson/os/seastore/logical_child_node.h"
-#include "crimson/os/seastore/lba_mapping.h"
 
 namespace crimson::os::seastore {
+
+enum class op_type {
+  mkfs,
+  init_cached_extent,
+  alloc_extent,
+  alloc_extents,
+  clone_mapping,
+  reserve_region,
+  rewrite_extent,
+  get_physical_extent_if_live,
+  update_refcount,
+  update_mappings
+};
+
+using overlay_value_t = std::variant<
+  std::monostate,
+  extent_ref_count_t,
+  std::vector<LogicalChildNodeRef>,
+  paddr_t
+>;
+
+template<typename T, typename Variant>
+T& expect_value(Variant& v) {
+  auto ptr = std::get_if<T>(&v);
+  assert(ptr && "unexpected variant type");
+  return *ptr;
+}
+
+// Overlay consists an operation and a value
+// to be applied to certain cursor.
+struct overlay_entry {
+  op_type op;
+  overlay_value_t value;
+};
 
 struct LBAOverlayCursor {
 private:

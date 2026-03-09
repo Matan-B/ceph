@@ -90,6 +90,13 @@ LBAOverlayManager::alloc_extents_ret LBAOverlayManager::alloc_extents(
     overlay_entry{op_type::alloc_extents, ext});
   std::vector<LBAOverlayCursor> tmp;
   // create the tmp vector based on the Overlaied cursors
+
+  // todo... we need to traverse over ext and apply overlay to each cursor
+  //         collect into a vector
+  //         and return it..
+
+  // clean up the vector from the overlaycursor!!!
+  // then i cold moce all to txn
   co_return tmp;
 }
 
