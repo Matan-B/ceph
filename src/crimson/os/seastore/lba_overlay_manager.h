@@ -56,6 +56,12 @@ private:
     Transaction &t,
     overlay_entry entry);
 
+
+  void apply_overlay_v2(
+    LBAOverlayCursor overlay_cursor,
+    Transaction &t,
+    overlay_entry entry);
+
 public:
   static LBAOverlayManagerRef create_lba_overlay_manager(Cache &cache);
 

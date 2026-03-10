@@ -16,6 +16,15 @@ LBAOverlayManagerRef LBAOverlayManager::create_lba_overlay_manager(Cache &cache)
     return LBAOverlayManagerRef(new LBAOverlayManager(std::move(lba_manager)));
 }
 
+void LBAOverlayManager::apply_overlay_v2(
+  LBAOverlayCursor overlay_cursor,
+  Transaction &t,
+  overlay_entry entry) {
+  overlaid_cursors[overlay_cursor.key] = overlay_cursor;
+  //transacito shouldnty care about cursor but entries 
+  // kill the set
+}
+
 void LBAOverlayManager::apply_overlay(
   LBACursorRef cursor,
   Transaction &t,
@@ -36,7 +45,7 @@ void LBAOverlayManager::apply_overlay(
       }
       case op_type::alloc_extents: {
         auto alloc_extents = expect_value<std::vector<LogicalChildNodeRef>>(entry.value);
-        overlaid_cursor.set_overlay(&LBAOverlayCursor::alloc_extents, alloc_extents);
+        //overlaid_cursor.set_overlay(&LBAOverlayCursor::alloc_extents, alloc_extents);
         break;
       }
       default:
@@ -89,13 +98,19 @@ LBAOverlayManager::alloc_extents_ret LBAOverlayManager::alloc_extents(
     t,
     overlay_entry{op_type::alloc_extents, ext});
   std::vector<LBAOverlayCursor> tmp;
-  // create the tmp vector based on the Overlaied cursors
-
-  // todo... we need to traverse over ext and apply overlay to each cursor
-  //         collect into a vector
-  //         and return it..
-
-  // clean up the vector from the overlaycursor!!!
+  for (auto &extent : ext) {
+    assert(extent->has_laddr());
+    auto key = extent->get_laddr();
+    auto val = lba::lba_map_val_t{
+      extent->get_length(),
+      extent->get_paddr(),
+      EXTENT_DEFAULT_REF_COUNT,
+      extent->get_last_committed_crc(),
+      extent->get_type()};
+    LBAOverlayCursor overlay_cursor;
+    
+    tmp.emplace_back(key, val);
+  }
   // then i cold moce all to txn
   co_return tmp;
 }

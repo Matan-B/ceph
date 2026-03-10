@@ -47,18 +47,26 @@ struct overlay_entry {
 
 struct LBAOverlayCursor {
 private:
-  // this could be null for newly inserted ones
-  LBACursorRef base_cursor;
+  laddr_t key;
+  std::optional<lba::lba_map_val_t> val;
 
   // overlaid values
   std::optional<extent_ref_count_t> overlaid_refcount;
-  std::optional<std::vector<LogicalChildNodeRef>> alloc_extents;
   std::optional<paddr_t> address;
 
   friend class LBAOverlayManager;
 
 public:
-  LBAOverlayCursor(LBACursorRef base_cursor) : base_cursor(base_cursor) {}
+  LBAOverlayCursor(LBACursorRef base_cursor) 
+     : key(base_cursor->key),
+       val (base_cursor->val)
+      {}
+
+  LBAOverlayCursor(laddr_t key, lba::lba_map_val_t val)
+     : key(key),
+       val(val)
+      {}
+
   LBAOverlayCursor() = default;
 
   template<typename T>
