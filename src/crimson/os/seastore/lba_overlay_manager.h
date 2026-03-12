@@ -28,12 +28,34 @@
 namespace crimson::os::seastore {
 
 /**
- * 1) apply_overlay_op          - save the deferred operation
- * 2) apply_transaction_overlay - create and return LBAOverlayCursor
- * 3) commit_overlay            - apply deferred operations
-
- * get_cursor returns LBAOverlayCursor
+ * LBAOverlayManager
+ * A projection layer over LBAManager for transactions.
+ * Users (e.g. TransactionManager) only see overlaid (cached) mapping changes.
+ * Cursors returned here are LBAOverlayCursor and reflect uncommitted updates.
+ * LBAOverlayManager records ops to let the underlying
+ * LBAManager replay then at commit time.
+ *
+ * Main path:
+ * - get_cursor() -     return an LBAOverlayCursor composed from the
+ *                      overlay (if any) or the base LBAManager view.
+ *
+ * - mutations    -     enqueue a deferred op via apply_overlay_op()
+ *                      and update/return the overlay view via
+ *                      apply_transaction_overlay().
+ *                      Example: alloc_extent(s), update_mapping_refcount..
+ *
+ * - commit_overlay() - walk the per-txn queued ops in a serilzed order
+ *                      and call the matching LBAManager ops.
+ *                      (alloc_* / update_mapping* / remap_mappings / remove),
+ *                      then clear the overlay state.
+*
+ * Notes:
+ * - Overlay is txn-local, base LBA tree is *unchanged* until commit.
+ * - This goal here is to avoid conflicts from shared LBA nodes.
+ *
+ * See: revised conflict-handling design paper.
  */
+
 class LBAOverlayManager;
 using LBAOverlayManagerRef = std::unique_ptr<LBAOverlayManager>;
 
