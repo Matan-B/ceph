@@ -334,7 +334,7 @@ TransactionManager::_remove(
 
   auto ret = co_await resolve_cursor_to_mapping(
     t,
-    indirect_cursor ? std::move(indirect_cursor) : std::move(direct_cursor)
+    indirect_cursor ? indirect_cursor : direct_cursor
   );
   DEBUGT("returning {}", t, ret);
   ceph_assert(ret.is_viewable());

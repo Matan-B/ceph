@@ -77,7 +77,7 @@ public:
   omap_set_key_ret omap_set_key(
     omap_root_t &omap_root,
     Transaction &t,
-    const std::string &key, const ceph::bufferlist &value) final;
+    const std::string key, const ceph::bufferlist value) final;
 
   omap_set_keys_ret omap_set_keys(
     omap_root_t &omap_root,
@@ -87,7 +87,7 @@ public:
   omap_rm_key_ret omap_rm_key(
     omap_root_t &omap_root,
     Transaction &t,
-    const std::string &key) final;
+    const std::string key) final;
 
   omap_rm_key_range_ret omap_rm_key_range(
     omap_root_t &omap_root,

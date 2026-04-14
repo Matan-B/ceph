@@ -153,50 +153,36 @@ BtreeOMapManager::omap_set_keys(
   Transaction &t,
   std::map<std::string, ceph::bufferlist>&& keys)
 {
-  return seastar::do_with(std::move(keys), [&, this](auto& keys) {
-    return trans_intr::do_for_each(
-      keys.begin(),
-      keys.end(),
-      [&, this](auto &p) {
-      return omap_set_key(omap_root, t, p.first, p.second);
-    });
-  });
+  for (auto &p : keys) {
+    co_await return omap_set_key(omap_root, t, p.first, std::move(p.second));
+  }
 }
 
 BtreeOMapManager::omap_set_key_ret
 BtreeOMapManager::omap_set_key(
   omap_root_t &omap_root,
   Transaction &t,
-  const std::string &key,
-  const ceph::bufferlist &value)
+  const std::string key,
+  const ceph::bufferlist value)
 {
   LOG_PREFIX(BtreeOMapManager::omap_set_key);
   DEBUGT("{} -> 0x{:x} value", t, key, value.length());
   // #FIXME: heap buffer overflow during logging if value is long (e.g. 1020B)
   // https://tracker.ceph.com/issues/71524
   // DEBUGT("{} -> {}", t, key, value);
-  return get_omap_root(
-    get_omap_context(t, omap_root),
-    omap_root
-  ).si_then([this, &t, &key, &value, &omap_root](auto root) {
-    return root->insert(get_omap_context(
-      t, omap_root), key, value);
-  }).si_then([this, &omap_root, &t](auto mresult) -> omap_set_key_ret {
-    if (mresult.status == mutation_status_t::SUCCESS)
-      return seastar::now();
-    else if (mresult.status == mutation_status_t::WAS_SPLIT)
-      return handle_root_split(
-	get_omap_context(t, omap_root), omap_root, mresult);
-    else
-      return seastar::now();
-  });
+  auto root = co_await get_omap_root(get_omap_context(t, omap_root), omap_root);
+  auto mresult = co_await root->insert(get_omap_context(t, omap_root), key, value);
+  if (mresult.status == mutation_status_t::WAS_SPLIT) {
+    co_return handle_root_split(get_omap_context(t, omap_root), omap_root, mresult);
+  }
+  assert(mresult.status == mutation_status_t::SUCCESS);
 }
 
 BtreeOMapManager::omap_rm_key_ret
 BtreeOMapManager::omap_rm_key(
   omap_root_t &omap_root,
   Transaction &t,
-  const std::string &key)
+  const std::string key)
 {
   LOG_PREFIX(BtreeOMapManager::omap_rm_key);
   DEBUGT("{}", t, key);
