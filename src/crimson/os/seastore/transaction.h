@@ -924,10 +924,11 @@ inline TransactionRef make_test_transaction() {
  *
  * Currently true for:
  *  - rewrite (background) transactions, for any non-root extent
+ *  - MUTATE (user) transactions for LBA/backref node types, which already
+ *    have merge_content_to() and on_data_commit() helpers in ExtentCommitter
  *
  *  To be expanded to:
- *  - user (txn_manager) transactions that mutate LBA nodes
- *  - Onode/Omap nodes
+ *  - Onode/Omap nodes (once merge helpers are added)
  */
 constexpr bool should_use_no_conflict_publish(const Transaction &t,
                                               extent_types_t ext_type) {
@@ -936,10 +937,14 @@ constexpr bool should_use_no_conflict_publish(const Transaction &t,
     return false;
   }
 
-  // TODO: Extend this as support grows (e.g. Onode/OMAP nodes).
-  //       is_user_transaction(txn_type) && is_lba_node(ext_type)
+  if (is_rewrite_transaction(t.get_src())) {
+    return !t.force_rewrite_conflict;
+  }
 
-  return !t.force_rewrite_conflict && is_rewrite_transaction(t.get_src());
+  // MUTATE transactions: use no-conflict publish for LBA/backref nodes, which
+  // have the required ExtentCommitter merge helpers.
+  return t.get_src() == Transaction::src_t::MUTATE &&
+         is_lba_backref_node(ext_type);
 }
 
 
