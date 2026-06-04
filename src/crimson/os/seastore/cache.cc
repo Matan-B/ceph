@@ -2000,9 +2000,10 @@ void Cache::complete_commit(
             t, final_block_start, start_seq);
   for (auto &i: t.retired_set) {
     auto &extent = i.extent;
-    if (should_use_no_conflict_publish(t, extent->get_type())) {
-     // retired extents should remain valid through complete_commit().
-     // We only free space post-commit *AFTER* handoff.
+    if (is_rewrite_transaction(t.get_src()) &&
+        should_use_no_conflict_publish(t, extent->get_type())) {
+      // REWRITE: the retired extent is the prior_instance of a fresh
+      // no-conflict extent; it must stay valid until handoff completes.
       assert(extent->is_valid());
     }
     epm.mark_space_free(extent->get_paddr(), extent->get_length());
@@ -2030,7 +2031,12 @@ void Cache::complete_commit(
     i->pending_for_transaction = TRANS_ID_NULL;
     i->on_initial_write();
     const auto t_src = t.get_src();
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    // Mirror the do_handoff condition from prepare_record: only rewrite-style
+    // fresh extents (with a prior_instance) use the no-conflict publish path.
+    const bool do_handoff =
+      should_use_no_conflict_publish(t, i->get_type()) &&
+      i->get_prior_instance() != nullptr;
+    if (do_handoff) {
       ceph_assert(i->committer);
       auto &committer = *i->committer;
       auto &prior = *i->get_prior_instance();
@@ -2131,7 +2137,6 @@ void Cache::complete_commit(
       auto &committer = *i->committer;
       committer.commit_state();
       committer.sync_checksum();
-      committer.unblock_trans(t);
       auto &prior = *i->prior_instance;
       prior.pending_for_transaction = TRANS_ID_NULL;
       ceph_assert(prior.is_valid());
@@ -2139,6 +2144,8 @@ void Cache::complete_commit(
         committer.commit_data();
       }
       committer.sync_version();
+      // Unblock after data is fully merged so readers see consistent content.
+      committer.unblock_trans(t);
       prior.complete_io();
       prior.clear_delta();
       i->committer.reset();
@@ -2169,15 +2176,24 @@ void Cache::complete_commit(
     commit_backref_entries(std::move(backref_entries), start_seq);
   }
 
+  // Invalidate staging extents that were published via the no-conflict path.
+  // Only rewrite transactions produce fresh extents with prior_instance; freshly
+  // allocated extents from MUTATE transactions are canonical and must not be
+  // invalidated.  force_rewrite_conflict redirects to the classic path, so
+  // should_use_no_conflict_publish() returning false already covers that case.
   t.for_each_finalized_fresh_block([&t](const CachedExtentRef &i) {
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (is_rewrite_transaction(t.get_src()) &&
+        should_use_no_conflict_publish(t, i->get_type())) {
       i->set_invalid(t);
     }
   });
 
+  // Invalidate no-conflict MUTATION_PENDING extents: their content has been
+  // merged into prior_instance, so the staging delta view is no longer needed.
+  // This now also covers MUTATE + LBA/backref nodes.
   for (auto &i: t.mutated_block_list) {
     if (should_use_no_conflict_publish(t, i->get_type())) {
-        i->set_invalid(t);
+      i->set_invalid(t);
     }
   }
 }
