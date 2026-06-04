@@ -1329,15 +1329,40 @@ private:
     Transaction &t,
     LBACursor &cursor)
   {
-    ceph_assert(cursor.is_viewable());
-    ceph_assert(cursor.ctx.trans.get_trans_id()
-		== t.get_trans_id());
-    assert(!cursor.is_end());
-    assert(cursor.get_pos() != BTREENODE_POS_NULL);
-    ceph_assert(t.get_trans_id() == cursor.ctx.trans.get_trans_id());
-    auto p = cursor.parent->cast<LBALeafNode>();
+    ceph_assert(cursor.ctx.trans.get_trans_id() == t.get_trans_id());
+
+    if (cursor.is_viewable()) {
+      assert(!cursor.is_end());
+      assert(cursor.get_pos() != BTREENODE_POS_NULL);
+      auto p = cursor.parent->cast<LBALeafNode>();
+      return p->template get_child<LogicalChildNode>(
+        t, cursor.ctx.cache, cursor.get_pos(), cursor.key);
+    }
+
+    // Cursor is not directly viewable.  Two possible reasons:
+    //
+    // 1. parent->is_valid() == false or modified_since() == true: the extent
+    //    was invalidated or structurally mutated since the cursor was taken.
+    //    The caller must call refresh() before use — assert to catch this.
+    //
+    // 2. is_viewable_by_trans() returned false (stable_become_pending /
+    //    stable_become_retired): this transaction has a pending view of the
+    //    same LBA leaf.  This happens with the no-conflict publish path when
+    //    another MUTATE on the same leaf committed without conflicting this
+    //    transaction, leaving a cached stable cursor non-viewable because this
+    //    transaction already mutated the same leaf.  Resolve synchronously.
+    ceph_assert(cursor.parent->is_valid());
+    ceph_assert(!cursor.parent->modified_since(cursor.modifications));
+    auto [viewable, leaf_ref] =
+      cursor.parent->resolve_transaction(t, cursor.key);
+    ceph_assert(!viewable);
+    auto p = leaf_ref->cast<LBALeafNode>();
+    auto it = p->lower_bound(cursor.key);
+    ceph_assert(it != p->end() && it.get_key() == cursor.key);
+    auto pos = it.get_offset();
+    assert(pos != BTREENODE_POS_NULL);
     return p->template get_child<LogicalChildNode>(
-      t, cursor.ctx.cache, cursor.get_pos(), cursor.key);
+      t, cursor.ctx.cache, pos, cursor.key);
   }
 
   base_iertr::future<LogicalChildNodeRef> read_cursor_by_type(
