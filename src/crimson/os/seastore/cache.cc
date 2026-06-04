@@ -1537,10 +1537,11 @@ record_t Cache::prepare_record(
     retire_stat.increment(extent->get_length());
     DEBUGT("retired and remove extent {}~0x{:x} -- {}",
 	   t, extent->get_paddr(), extent->get_length(), *extent);
-    if (should_use_no_conflict_publish(t, extent->get_type())) {
-      // avoid extent invalidation on retirement
-      // only adjust dirty bookkeeping
-      // we would invalidate them in complete_commit final stage
+    if (is_rewrite_transaction(t.get_src()) &&
+        should_use_no_conflict_publish(t, extent->get_type())) {
+      // REWRITE only: the retired extent is the prior_instance that the fresh
+      // no-conflict extent will publish into.  Defer cache removal until
+      // complete_commit so the handoff can complete first.
       assert(extent->is_stable());
       if (extent->is_stable_dirty()) {
         remove_from_dirty(extent, &trans_src);
@@ -1659,12 +1660,17 @@ record_t Cache::prepare_record(
 	  i->get_length(),
 	  i->get_type()));
     }
-    i->set_io_wait(CachedExtent::extent_state_t::CLEAN,
-                   should_use_no_conflict_publish(t, i->get_type()));
+    // Fresh blocks only use the no-conflict handoff when there is a prior
+    // instance to publish into (i.e. REWRITE-style extents).  Freshly
+    // allocated extents from MUTATE transactions have no prior_instance and
+    // must go through the classic add_extent() path instead.
+    const bool do_handoff =
+      should_use_no_conflict_publish(t, i->get_type()) &&
+      i->get_prior_instance() != nullptr;
+    i->set_io_wait(CachedExtent::extent_state_t::CLEAN, do_handoff);
     // Note, paddr is known until complete_commit(),
     // so add_extent() later.
-    if (should_use_no_conflict_publish(t, i->get_type())) {
-      assert(i->get_prior_instance());
+    if (do_handoff) {
       assert(!i->committer);
       assert(!i->get_prior_instance()->committer);
       i->new_committer(t);
@@ -1672,8 +1678,7 @@ record_t Cache::prepare_record(
       auto &committer = *i->committer;
       committer.block_trans(t);
       i->get_prior_instance()->set_io_wait(
-        CachedExtent::extent_state_t::CLEAN,
-        should_use_no_conflict_publish(t, i->get_type()));
+        CachedExtent::extent_state_t::CLEAN, true);
     }
   }
 
@@ -1698,8 +1703,10 @@ record_t Cache::prepare_record(
 	  i->get_length(),
 	  i->get_type()));
     }
-    if (should_use_no_conflict_publish(t, i->get_type())) {
-      assert(i->get_prior_instance());
+    const bool do_handoff =
+      should_use_no_conflict_publish(t, i->get_type()) &&
+      i->get_prior_instance() != nullptr;
+    if (do_handoff) {
       assert(!i->committer);
       assert(!i->get_prior_instance()->committer);
       i->new_committer(t);
@@ -1710,8 +1717,7 @@ record_t Cache::prepare_record(
       i->get_prior_instance()->set_io_wait(
         CachedExtent::extent_state_t::CLEAN, true);
     }
-    i->set_io_wait(CachedExtent::extent_state_t::CLEAN,
-                   should_use_no_conflict_publish(t, i->get_type()));
+    i->set_io_wait(CachedExtent::extent_state_t::CLEAN, do_handoff);
     // Note, paddr is (can be) known until complete_commit(),
     // so add_extent() later.
   }
