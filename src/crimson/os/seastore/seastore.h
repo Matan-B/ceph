@@ -425,8 +425,14 @@ public:
 
     static constexpr auto LAT_MAX = static_cast<std::size_t>(op_type_t::MAX);
 
+    // Buckets for the per-transaction conflict/replay distribution. Bucket i
+    // (i < REPLAY_BUCKETS-1) counts transactions replayed exactly i times; the
+    // last bucket is a catch-all for >= REPLAY_BUCKETS-1 replays.
+    static constexpr std::size_t REPLAY_BUCKETS = 16;
+
     struct {
       std::array<seastar::metrics::histogram, LAT_MAX> op_lat;
+      seastar::metrics::histogram conflict_replays;
     } stats;
 
     seastar::metrics::histogram& get_latency(
@@ -440,6 +446,23 @@ public:
       seastar::metrics::histogram& lat = get_latency(op_type);
       lat.sample_count++;
       lat.sample_sum += std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+    }
+
+    // Record how many times a just-completed transaction was conflicted/replayed.
+    // Called only from the do_transaction_no_callbacks() completion path (the
+    // reused-transaction / with_repeat_trans_intr lifecycle), so the histogram is
+    // that path's replay distribution by construction. See get_num_replays().
+    void add_conflict_replay_sample(std::size_t num_replays) {
+      auto& hist = stats.conflict_replays;
+      if (hist.buckets.empty()) {
+        // register_metrics() did not run (store inactive); nothing to record.
+        return;
+      }
+      std::size_t idx = num_replays < REPLAY_BUCKETS ?
+        num_replays : REPLAY_BUCKETS - 1;
+      ++hist.buckets[idx].count;
+      ++hist.sample_count;
+      hist.sample_sum += num_replays;
     }
 
     /*

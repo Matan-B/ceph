@@ -464,6 +464,25 @@ public:
     return conflicted;
   }
 
+  // Number of times this transaction was conflicted and replayed before
+  // finally committing.
+  //
+  // Only meaningful for transactions reused across retries via
+  // with_repeat_trans_intr() (the "Pattern A" lifecycle), where
+  // reset_preserve_handle() intentionally does NOT clear num_replays, so it
+  // accumulates over the whole retry loop. The hot such path is
+  // do_transaction_no_callbacks() (user MUTATE writes), which is the only
+  // place this is sampled (see Shard::add_conflict_replay_sample).
+  //
+  // It is NOT meaningful for the fresh-per-retry lifecycle ("Pattern B":
+  // repeat_eagain() wrapping with_transaction_intr(), which create_transaction()s
+  // a new transaction inside the retried lambda) -- there each attempt is a
+  // brand-new transaction that starts at 0, so this never reflects the total
+  // retry count. Those paths are intentionally not sampled.
+  std::size_t get_num_replays() const {
+    return num_replays;
+  }
+
   auto &get_handle() {
     return handle;
   }
@@ -881,6 +900,10 @@ private:
   rewrite_stats_t rewrite_stats;
 
   bool conflicted = false;
+
+  // See get_num_replays(). Deliberately NOT reset by reset_preserve_handle()
+  // so it accumulates across the with_repeat_trans_intr() retry loop.
+  std::size_t num_replays = 0;
 
   bool has_reset = false;
 
