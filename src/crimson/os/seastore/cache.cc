@@ -1023,6 +1023,14 @@ void Cache::mark_transaction_conflicted(
   SUBTRACET(seastore_t, "", t);
   assert(!t.conflicted);
   t.conflicted = true;
+  // Count this conflict against the victim transaction. This fires for every
+  // transaction src type, but the count is only *sampled* for the user-MUTATE
+  // do_transaction path, where the transaction is reused across retries (so it
+  // accumulates -- see get_num_replays / Shard::add_conflict_replay_sample).
+  // On fresh-per-retry paths (repeat_eagain + with_transaction_intr) the
+  // incremented transaction is simply discarded before the retry, so the
+  // increment is harmless there.
+  ++t.num_replays;
 
   auto& efforts = get_by_src(stats.invalidated_efforts_by_src,
                              t.get_src());
