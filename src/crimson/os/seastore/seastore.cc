@@ -220,15 +220,16 @@ void SeaStore::Shard::register_metrics(store_index_t store_index)
 
   // Per-stage do_transaction latency histograms (microseconds).
   std::pair<txn_stage_t, sm::label_instance> labels_by_stage[] = {
-    {txn_stage_t::COLLOCK_WAIT,   sm::label_instance("stage", "collock_wait")},
-    {txn_stage_t::THROTTLER_WAIT, sm::label_instance("stage", "throttler_wait")},
-    {txn_stage_t::BUILD,          sm::label_instance("stage", "build")},
-    {txn_stage_t::SUBMIT,         sm::label_instance("stage", "submit")},
-    {txn_stage_t::RESERVE,        sm::label_instance("stage", "reserve")},
-    {txn_stage_t::OOL_WRITE,      sm::label_instance("stage", "ool_write")},
-    {txn_stage_t::LBA_UPDATE,     sm::label_instance("stage", "lba_update")},
-    {txn_stage_t::PREPARE_ENTER,  sm::label_instance("stage", "prepare_enter")},
-    {txn_stage_t::PREPARE_RECORD, sm::label_instance("stage", "prepare_record")},
+    {txn_stage_t::COLLOCK_WAIT,          sm::label_instance("stage", "collock_wait")},
+    {txn_stage_t::THROTTLER_WAIT,        sm::label_instance("stage", "throttler_wait")},
+    {txn_stage_t::BUILD,                 sm::label_instance("stage", "build")},
+    {txn_stage_t::SUBMIT_TOTAL,          sm::label_instance("stage", "submit_total")},
+    {txn_stage_t::SUBMIT_RESERVE,        sm::label_instance("stage", "submit_reserve")},
+    {txn_stage_t::SUBMIT_OOL_WRITE,      sm::label_instance("stage", "submit_ool_write")},
+    {txn_stage_t::SUBMIT_LBA_UPDATE,     sm::label_instance("stage", "submit_lba_update")},
+    {txn_stage_t::SUBMIT_PREPARE_ENTER,  sm::label_instance("stage", "submit_prepare_enter")},
+    {txn_stage_t::SUBMIT_PREPARE_RECORD, sm::label_instance("stage", "submit_prepare_record")},
+    {txn_stage_t::SUBMIT_JOURNAL,        sm::label_instance("stage", "submit_journal")},
   };
   for (auto& [stage, label] : labels_by_stage) {
     auto idx = static_cast<std::size_t>(stage);
@@ -1773,14 +1774,15 @@ seastar::future<> SeaStore::Shard::do_transaction_no_callbacks(
   add_stage_latency_sample(txn_stage_t::COLLOCK_WAIT, collock_wait);
   add_stage_latency_sample(txn_stage_t::THROTTLER_WAIT, throttler_wait);
   add_stage_latency_sample(txn_stage_t::BUILD, ctx.build_time);
-  add_stage_latency_sample(txn_stage_t::SUBMIT, ctx.submit_time);
+  add_stage_latency_sample(txn_stage_t::SUBMIT_TOTAL, ctx.submit_time);
   {
     auto& pd = ctx.transaction->get_phase_durations();
-    add_stage_latency_sample(txn_stage_t::RESERVE, pd.reserve);
-    add_stage_latency_sample(txn_stage_t::OOL_WRITE, pd.ool_write);
-    add_stage_latency_sample(txn_stage_t::LBA_UPDATE, pd.lba_update);
-    add_stage_latency_sample(txn_stage_t::PREPARE_ENTER, pd.prepare_enter);
-    add_stage_latency_sample(txn_stage_t::PREPARE_RECORD, pd.prepare_record);
+    add_stage_latency_sample(txn_stage_t::SUBMIT_RESERVE, pd.reserve);
+    add_stage_latency_sample(txn_stage_t::SUBMIT_OOL_WRITE, pd.ool_write);
+    add_stage_latency_sample(txn_stage_t::SUBMIT_LBA_UPDATE, pd.lba_update);
+    add_stage_latency_sample(txn_stage_t::SUBMIT_PREPARE_ENTER, pd.prepare_enter);
+    add_stage_latency_sample(txn_stage_t::SUBMIT_PREPARE_RECORD, pd.prepare_record);
+    add_stage_latency_sample(txn_stage_t::SUBMIT_JOURNAL, pd.journal);
   }
   add_latency_sample(
     op_type_t::DO_TRANSACTION,

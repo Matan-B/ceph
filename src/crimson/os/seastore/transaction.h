@@ -484,16 +484,21 @@ public:
     return num_replays;
   }
 
-  // Time spent in each sub-phase of the submit path, accumulated across retries
-  // (like num_replays, NOT reset by reset_preserve_handle). Populated by
+  // Time spent in each sub-phase of submit_transaction, accumulated across
+  // retries (like num_replays, NOT reset by reset_preserve_handle). Populated by
   // TransactionManager::{submit,do_submit}_transaction and sampled on completion
-  // by do_transaction_no_callbacks to break down the collection-lock hold time.
+  // by do_transaction_no_callbacks. All fields except `journal` are within the
+  // collection-lock hold; `journal` is the post-lock journal write. So:
+  //   collection-lock hold ~= BUILD + (all below except journal)
+  // and these make up the bulk of SUBMIT_TOTAL (minor gaps like the pipeline
+  // complete() stage remain unaccounted).
   struct phase_durations_t {
     std::chrono::steady_clock::duration reserve{0};         // enter reserve + epm reserve
     std::chrono::steady_clock::duration ool_write{0};       // delayed + preallocated OOL writes
     std::chrono::steady_clock::duration lba_update{0};      // update_lba_mappings
     std::chrono::steady_clock::duration prepare_enter{0};   // enter(prepare) pipeline stage
     std::chrono::steady_clock::duration prepare_record{0};  // prepare_record
+    std::chrono::steady_clock::duration journal{0};         // journal->submit_record (post-lock)
   };
   phase_durations_t &get_phase_durations() {
     return phase_durations;

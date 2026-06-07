@@ -53,14 +53,18 @@ enum class txn_stage_t : uint8_t {
     COLLOCK_WAIT = 0,  // waiting on the collection ordering_lock
     THROTTLER_WAIT,    // waiting for a throttler slot
     BUILD,             // building the transaction (_do_transaction_step loop)
-    SUBMIT,            // submit_transaction (pipeline + journal write)
-    // Sub-phases of submit, all within the collection-lock hold, to break down
-    // collock_wait. See Transaction::phase_durations_t.
-    RESERVE,           // enter(reserve_projected_usage) + epm reserve_projected_usage
-    OOL_WRITE,         // write_delayed + write_preallocated OOL extents (device I/O)
-    LBA_UPDATE,        // update_lba_mappings
-    PREPARE_ENTER,     // enter(prepare) pipeline stage (global OrderedExclusive wait)
-    PREPARE_RECORD,    // prepare_record (record encoding)
+    SUBMIT_TOTAL,      // the whole submit_transaction (pipeline + journal write)
+    // Sub-phases of submit_transaction. These together make up the bulk of
+    // SUBMIT_TOTAL but don't sum to it exactly (minor gaps like the pipeline
+    // complete() stage are unaccounted). All are within the collection-lock hold
+    // EXCEPT SUBMIT_JOURNAL (post-lock), so:
+    //   collection-lock hold ~= BUILD + every SUBMIT_* below except SUBMIT_JOURNAL.
+    SUBMIT_RESERVE,        // enter(reserve_projected_usage) + epm reserve_projected_usage
+    SUBMIT_OOL_WRITE,      // write_delayed + write_preallocated OOL extents (device I/O)
+    SUBMIT_LBA_UPDATE,     // update_lba_mappings
+    SUBMIT_PREPARE_ENTER,  // enter(prepare) pipeline stage (global OrderedExclusive wait)
+    SUBMIT_PREPARE_RECORD, // prepare_record (record encoding)
+    SUBMIT_JOURNAL,        // journal->submit_record -- POST-lock (not part of the hold)
     MAX
 };
 
