@@ -647,6 +647,7 @@ TransactionManager::do_submit_transaction(
   }
 
   SUBTRACET(seastore_t, "submitting record", tref);
+  auto journal_start = std::chrono::steady_clock::now();
   co_await journal->submit_record(
     std::move(record),
     tref.get_handle(),
@@ -666,6 +667,8 @@ TransactionManager::do_submit_transaction(
       submit_transaction_iertr::pass_further{},
       crimson::ct_error::assert_all("Hit error submitting to journal")
     );
+  tref.get_phase_durations().journal +=
+    std::chrono::steady_clock::now() - journal_start;
 
   co_await trans_intr::make_interruptible(
     tref.get_handle().complete()
