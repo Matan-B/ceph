@@ -47,6 +47,16 @@ enum class op_type_t : uint8_t {
     MAX
 };
 
+// Per-stage breakdown of do_transaction latency, to localize where the time
+// goes (queueing vs CPU work vs journal I/O). See add_stage_latency_sample.
+enum class txn_stage_t : uint8_t {
+    COLLOCK_WAIT = 0,  // waiting on the collection ordering_lock
+    THROTTLER_WAIT,    // waiting for a throttler slot
+    BUILD,             // building the transaction (_do_transaction_step loop)
+    SUBMIT,            // submit_transaction (pipeline + journal write)
+    MAX
+};
+
 class SeastoreCollection final : public FuturizedCollection {
 public:
   template <typename... T>
@@ -252,6 +262,11 @@ public:
       ceph::os::Transaction::iterator iter;
       std::chrono::steady_clock::time_point begin_timestamp = std::chrono::steady_clock::now();
 
+      // Per-stage time accumulated across all (re)attempts of the repeat loop;
+      // sampled once on completion. See do_transaction_no_callbacks.
+      std::chrono::steady_clock::duration build_time{0};
+      std::chrono::steady_clock::duration submit_time{0};
+
       void reset_preserve_handle(TransactionManager &tm) {
         tm.reset_transaction_preserve_handle(*transaction);
         iter = ext_transaction.begin();
@@ -430,9 +445,20 @@ public:
     // last bucket is a catch-all for >= REPLAY_BUCKETS-1 replays.
     static constexpr std::size_t REPLAY_BUCKETS = 16;
 
+    static constexpr auto STAGE_MAX = static_cast<std::size_t>(txn_stage_t::MAX);
+    // Upper bounds (microseconds) for the per-stage do_transaction latency
+    // histograms. Mirrors the op_lat bucketing for comparability. Values above
+    // the last bound are not bucketed but are still counted in sample_count
+    // (recoverable as the +Inf overflow).
+    static constexpr std::array<uint64_t, 14> STAGE_LAT_BUCKETS_US = {
+      250, 500, 1000, 1500, 2000, 3000, 5000, 7500,
+      10000, 15000, 20000, 30000, 50000, 100000
+    };
+
     struct {
       std::array<seastar::metrics::histogram, LAT_MAX> op_lat;
       seastar::metrics::histogram conflict_replays;
+      std::array<seastar::metrics::histogram, STAGE_MAX> stage_lat;
     } stats;
 
     seastar::metrics::histogram& get_latency(
@@ -463,6 +489,27 @@ public:
       ++hist.buckets[idx].count;
       ++hist.sample_count;
       hist.sample_sum += num_replays;
+    }
+
+    // Record the latency of one do_transaction stage (microseconds). Buckets are
+    // non-cumulative (bucket = first upper_bound >= value); values above the top
+    // bound aren't bucketed but still land in sample_count/sample_sum.
+    void add_stage_latency_sample(txn_stage_t stage,
+        std::chrono::steady_clock::duration dur) {
+      auto& hist = stats.stage_lat[static_cast<std::size_t>(stage)];
+      if (hist.buckets.empty()) {
+        // register_metrics() did not run (store inactive); nothing to record.
+        return;
+      }
+      auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+      for (auto& b : hist.buckets) {
+        if (static_cast<double>(us) <= b.upper_bound) {
+          ++b.count;
+          break;
+        }
+      }
+      ++hist.sample_count;
+      hist.sample_sum += us;
     }
 
     /*
