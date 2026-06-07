@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <iostream>
 
 #include <boost/intrusive/list.hpp>
@@ -483,6 +484,21 @@ public:
     return num_replays;
   }
 
+  // Time spent in each sub-phase of the submit path, accumulated across retries
+  // (like num_replays, NOT reset by reset_preserve_handle). Populated by
+  // TransactionManager::{submit,do_submit}_transaction and sampled on completion
+  // by do_transaction_no_callbacks to break down the collection-lock hold time.
+  struct phase_durations_t {
+    std::chrono::steady_clock::duration reserve{0};         // enter reserve + epm reserve
+    std::chrono::steady_clock::duration ool_write{0};       // delayed + preallocated OOL writes
+    std::chrono::steady_clock::duration lba_update{0};      // update_lba_mappings
+    std::chrono::steady_clock::duration prepare_enter{0};   // enter(prepare) pipeline stage
+    std::chrono::steady_clock::duration prepare_record{0};  // prepare_record
+  };
+  phase_durations_t &get_phase_durations() {
+    return phase_durations;
+  }
+
   auto &get_handle() {
     return handle;
   }
@@ -904,6 +920,10 @@ private:
   // See get_num_replays(). Deliberately NOT reset by reset_preserve_handle()
   // so it accumulates across the with_repeat_trans_intr() retry loop.
   std::size_t num_replays = 0;
+
+  // See get_phase_durations(). Like num_replays, NOT reset by
+  // reset_preserve_handle() so it accumulates across retries.
+  phase_durations_t phase_durations;
 
   bool has_reset = false;
 

@@ -54,6 +54,13 @@ enum class txn_stage_t : uint8_t {
     THROTTLER_WAIT,    // waiting for a throttler slot
     BUILD,             // building the transaction (_do_transaction_step loop)
     SUBMIT,            // submit_transaction (pipeline + journal write)
+    // Sub-phases of submit, all within the collection-lock hold, to break down
+    // collock_wait. See Transaction::phase_durations_t.
+    RESERVE,           // enter(reserve_projected_usage) + epm reserve_projected_usage
+    OOL_WRITE,         // write_delayed + write_preallocated OOL extents (device I/O)
+    LBA_UPDATE,        // update_lba_mappings
+    PREPARE_ENTER,     // enter(prepare) pipeline stage (global OrderedExclusive wait)
+    PREPARE_RECORD,    // prepare_record (record encoding)
     MAX
 };
 
