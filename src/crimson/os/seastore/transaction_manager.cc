@@ -633,15 +633,17 @@ TransactionManager::do_submit_transaction(
     ++(shard_stats.processing_postlock_io_num);
   }
 
-  // Option 1: drain deferred OOL device-writes HERE -- after lock release but
-  // BEFORE entering the global-exclusive prepare stage.  This keeps OOL I/O
-  // concurrent across shards (different shards drain in parallel while each
-  // waits here) rather than serializing it inside the exclusive prepare hold.
-  // Durability is preserved: drain completes before prepare_record, which runs
-  // before journal->submit_record.
-  if (tref.has_deferred_ool_writes()) {
-    co_await trans_intr::make_interruptible(tref.drain_deferred_ool_writes());
-  }
+  // Option 1 (concurrent drain): kick off the deferred OOL device-write future
+  // immediately after lock release, but do NOT await it yet.  The actual await
+  // happens inside prepare, just before prepare_record.  This lets OOL I/O
+  // overlap with the prepare-enter queue wait: when prepare_enter is long
+  // (the common case under load) the drain is already done by the time we are
+  // admitted, so it costs nothing on the critical path.  Durability is
+  // preserved: drain is awaited before prepare_record, which runs before
+  // journal->submit_record.
+  auto drain_fut = tref.has_deferred_ool_writes()
+    ? tref.drain_deferred_ool_writes()
+    : seastar::now();
 
   SUBTRACET(seastore_t, "entering prepare", tref);
   auto prepare_enter_start = std::chrono::steady_clock::now();
@@ -650,6 +652,10 @@ TransactionManager::do_submit_transaction(
   );
   tref.get_phase_durations().prepare_enter +=
     std::chrono::steady_clock::now() - prepare_enter_start;
+
+  // Await drain before prepare_record; typically already resolved since the
+  // prepare-enter wait is longer than the OOL I/O (~400 µs).
+  co_await trans_intr::make_interruptible(std::move(drain_fut));
 
   while (tref.need_wait_visibility) {
     co_await trans_intr::make_interruptible(seastar::yield());
