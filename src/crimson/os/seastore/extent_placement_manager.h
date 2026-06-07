@@ -115,13 +115,20 @@ public:
 private:
   alloc_write_iertr::future<> do_write(
     Transaction& t,
-    std::list<CachedExtentRef> &extent);
+    std::list<CachedExtentRef> &extent,
+    // True until a record has already been submitted for this transaction.
+    // When the final/only record is written while still first_batch, it is the
+    // single-record fast path and its device write is deferred (Option 1).
+    bool first_batch=true);
 
   alloc_write_ertr::future<> write_record(
     Transaction& t,
     record_t&& record,
     std::list<LogicalCachedExtentRef> &&extents,
-    bool with_atomic_roll_segment=false);
+    bool with_atomic_roll_segment=false,
+    // When true, the device-write completion is stashed on the transaction and
+    // awaited after the collection lock is released, instead of awaited here.
+    bool defer_write=false);
 
   store_index_t store_index;
   journal::SegmentAllocator segment_allocator;

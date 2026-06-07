@@ -646,6 +646,17 @@ TransactionManager::do_submit_transaction(
     ++(shard_stats.processing_postlock_io_num);
   }
 
+  // Option 1: single-record OOL writes had their addresses assigned under the
+  // collection lock (so prepare_record could run) but their device-write
+  // completion was deferred to here -- outside the lock hold. Drain them (this
+  // attempt's, plus any left in-flight by prior conflicted attempts) before
+  // committing the journal record, so the OOL data is durable before the record
+  // that references it. Past prepare_record the transaction no longer conflicts,
+  // so this await won't be interrupted.
+  if (tref.has_deferred_ool_writes()) {
+    co_await trans_intr::make_interruptible(tref.drain_deferred_ool_writes());
+  }
+
   SUBTRACET(seastore_t, "submitting record", tref);
   auto journal_start = std::chrono::steady_clock::now();
   co_await journal->submit_record(

@@ -5,8 +5,12 @@
 
 #include <chrono>
 #include <iostream>
+#include <vector>
 
 #include <boost/intrusive/list.hpp>
+
+#include <seastar/core/future.hh>
+#include <seastar/core/loop.hh>
 
 #include "crimson/common/log.h"
 #include "crimson/os/seastore/backref_entry.h"
@@ -504,6 +508,33 @@ public:
     return phase_durations;
   }
 
+  // Option 1 (shrink the collection-lock hold): for a single-record OOL write,
+  // the address is assigned synchronously under the collection lock but the
+  // device-write completion is deferred here and awaited *after* the lock is
+  // released, before the journal commit. drain_deferred_ool_writes() MUST be
+  // called on both the success path AND the conflict/interrupt path of
+  // do_submit_transaction so no in-flight write is orphaned when the
+  // transaction is replayed.
+  void add_deferred_ool_write(seastar::future<> f) {
+    deferred_ool_writes.push_back(std::move(f));
+  }
+  bool has_deferred_ool_writes() const {
+    return !deferred_ool_writes.empty();
+  }
+  seastar::future<> drain_deferred_ool_writes() {
+    if (deferred_ool_writes.empty()) {
+      return seastar::now();
+    }
+    // These are plain seastar::future<> (OOL write errors were already collapsed
+    // with assert_all when stashed), so the iterator-range when_all_succeed is
+    // safe here (cf. Heartbeat::send_heartbeats) -- unlike the interruptible-
+    // errorated case that when_all_succeed can't handle.
+    return seastar::do_with(std::move(deferred_ool_writes),
+      [](auto &ws) {
+        return seastar::when_all_succeed(ws.begin(), ws.end());
+      });
+  }
+
   auto &get_handle() {
     return handle;
   }
@@ -929,6 +960,11 @@ private:
   // See get_phase_durations(). Like num_replays, NOT reset by
   // reset_preserve_handle() so it accumulates across retries.
   phase_durations_t phase_durations;
+
+  // See add_deferred_ool_write(). Drained by do_submit_transaction on every
+  // attempt (success and conflict), so it is empty by the time the transaction
+  // is replayed; not touched by reset_preserve_handle().
+  std::vector<seastar::future<>> deferred_ool_writes;
 
   bool has_reset = false;
 

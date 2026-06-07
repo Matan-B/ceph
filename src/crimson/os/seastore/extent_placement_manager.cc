@@ -36,7 +36,8 @@ SegmentedOolWriter::write_record(
   Transaction& t,
   record_t&& record,
   std::list<LogicalCachedExtentRef>&& extents,
-  bool with_atomic_roll_segment)
+  bool with_atomic_roll_segment,
+  bool defer_write)
 {
   LOG_PREFIX(SegmentedOolWriter::write_record);
   assert(extents.size());
@@ -66,7 +67,7 @@ SegmentedOolWriter::write_record(
     extent_addr = extent_addr.as_seg_paddr().add_offset(
         extent->get_length());
   }
-  return std::move(ret.future
+  auto write_fut = std::move(ret.future
   ).safe_then([this, FNAME, &t,
                record_base=ret.record_base_regardless_md
               ](record_locator_t ret) {
@@ -75,12 +76,25 @@ SegmentedOolWriter::write_record(
     // ool won't write metadata, so the paddrs must be equal
     assert(ret.record_block_base == record_base.offset);
   });
+  if (defer_write) {
+    // The OOL addresses were assigned synchronously above, so prepare_record can
+    // proceed under the collection lock; defer the device-write completion so it
+    // lands outside the lock hold (Option 1). It is awaited (drained) before the
+    // journal commit and on the conflict path. OOL write failures are fatal, so
+    // collapse to a plain future for stashing on the transaction.
+    t.add_deferred_ool_write(
+      std::move(write_fut).handle_error(
+        crimson::ct_error::assert_all("Hit error writing OOL extents")));
+    return alloc_write_ertr::now();
+  }
+  return write_fut;
 }
 
 SegmentedOolWriter::alloc_write_iertr::future<>
 SegmentedOolWriter::do_write(
   Transaction& t,
-  std::list<CachedExtentRef>& extents)
+  std::list<CachedExtentRef>& extents,
+  bool first_batch)
 {
   LOG_PREFIX(SegmentedOolWriter::do_write);
   assert(!extents.empty());
@@ -90,8 +104,8 @@ SegmentedOolWriter::do_write(
            extents.size());
     return trans_intr::make_interruptible(
       record_submitter.wait_available()
-    ).si_then([this, &t, &extents] {
-      return do_write(t, extents);
+    ).si_then([this, &t, &extents, first_batch] {
+      return do_write(t, extents, first_batch);
     });
   }
   record_t record(record_type_t::OOL, t.get_src());
@@ -125,7 +139,9 @@ SegmentedOolWriter::do_write(
           return std::move(fut_write);
         })
       ).si_then([this, &t, &extents] {
-        return do_write(t, extents);
+        // A record was already submitted (or rolled), so the remaining extents
+        // form additional record(s): no longer the single-record fast path.
+        return do_write(t, extents, false /* first_batch */);
       });
     }
 
@@ -158,7 +174,8 @@ SegmentedOolWriter::do_write(
         write_record(t, std::move(record), std::move(pending_extents))
       ).si_then([this, &t, &extents] {
         if (!extents.empty()) {
-          return do_write(t, extents);
+          // More records follow; not the single-record fast path.
+          return do_write(t, extents, false /* first_batch */);
         } else {
           return alloc_write_iertr::now();
         }
@@ -172,8 +189,12 @@ SegmentedOolWriter::do_write(
          t, segment_allocator.get_name(),
          num_extents);
   assert(num_extents > 0);
+  // If no record has been submitted yet for this transaction, this is the only
+  // record (single-record fast path) -> defer its device write past the lock.
   return trans_intr::make_interruptible(
-    write_record(t, std::move(record), std::move(pending_extents)));
+    write_record(t, std::move(record), std::move(pending_extents),
+                 false /* with_atomic_roll_segment */,
+                 first_batch /* defer_write */));
 }
 
 SegmentedOolWriter::alloc_write_iertr::future<>
