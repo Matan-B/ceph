@@ -616,21 +616,31 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().ool_write +=
     std::chrono::steady_clock::now() - ool_start;
 
-  // Option 2: release the collection lock before entering the global-exclusive
+  // Options 1+2: release the collection lock before entering the global-exclusive
   // prepare stage.  OOL addresses were assigned synchronously above (Option 1),
   // so prepare_record has everything it needs.  The prepare-enter wait and
   // prepare_record itself now run post-lock, so same-PG serialization no longer
   // inflates collock_wait.
   //
   // Ordering is preserved for MUTATE txns: Seastar cooperative scheduling means
-  // A calls enter(prepare) immediately after releasing the lock (no suspension),
-  // while the next same-PG waiter B still has its entire build phase to complete
-  // before it can reach enter(prepare).  need_wait_visibility is a REWRITE-only
-  // concern and does not apply to MUTATE.
+  // A calls drain+enter(prepare) immediately after releasing the lock (no
+  // suspension until the drain await), while the next same-PG waiter B still
+  // has its entire build phase to complete before reaching enter(prepare).
+  // need_wait_visibility is a REWRITE-only concern and does not apply to MUTATE.
   tref.get_handle().maybe_release_collection_lock();
   if (tref.get_src() == Transaction::src_t::MUTATE) {
     --(shard_stats.processing_inlock_io_num);
     ++(shard_stats.processing_postlock_io_num);
+  }
+
+  // Option 1: drain deferred OOL device-writes HERE -- after lock release but
+  // BEFORE entering the global-exclusive prepare stage.  This keeps OOL I/O
+  // concurrent across shards (different shards drain in parallel while each
+  // waits here) rather than serializing it inside the exclusive prepare hold.
+  // Durability is preserved: drain completes before prepare_record, which runs
+  // before journal->submit_record.
+  if (tref.has_deferred_ool_writes()) {
+    co_await trans_intr::make_interruptible(tref.drain_deferred_ool_writes());
   }
 
   SUBTRACET(seastore_t, "entering prepare", tref);
@@ -656,17 +666,6 @@ TransactionManager::do_submit_transaction(
     journal->get_trimmer().get_dirty_tail());
   tref.get_phase_durations().prepare_record +=
     std::chrono::steady_clock::now() - prepare_record_start;
-
-  // Option 1: single-record OOL writes had their addresses assigned under the
-  // collection lock (so prepare_record could run) but their device-write
-  // completion was deferred to here -- outside the lock hold. Drain them (this
-  // attempt's, plus any left in-flight by prior conflicted attempts) before
-  // committing the journal record, so the OOL data is durable before the record
-  // that references it. Past prepare_record the transaction no longer conflicts,
-  // so this await won't be interrupted.
-  if (tref.has_deferred_ool_writes()) {
-    co_await trans_intr::make_interruptible(tref.drain_deferred_ool_writes());
-  }
 
   SUBTRACET(seastore_t, "submitting record", tref);
   auto journal_start = std::chrono::steady_clock::now();
