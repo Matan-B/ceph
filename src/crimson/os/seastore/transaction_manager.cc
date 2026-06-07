@@ -616,6 +616,23 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().ool_write +=
     std::chrono::steady_clock::now() - ool_start;
 
+  // Option 2: release the collection lock before entering the global-exclusive
+  // prepare stage.  OOL addresses were assigned synchronously above (Option 1),
+  // so prepare_record has everything it needs.  The prepare-enter wait and
+  // prepare_record itself now run post-lock, so same-PG serialization no longer
+  // inflates collock_wait.
+  //
+  // Ordering is preserved for MUTATE txns: Seastar cooperative scheduling means
+  // A calls enter(prepare) immediately after releasing the lock (no suspension),
+  // while the next same-PG waiter B still has its entire build phase to complete
+  // before it can reach enter(prepare).  need_wait_visibility is a REWRITE-only
+  // concern and does not apply to MUTATE.
+  tref.get_handle().maybe_release_collection_lock();
+  if (tref.get_src() == Transaction::src_t::MUTATE) {
+    --(shard_stats.processing_inlock_io_num);
+    ++(shard_stats.processing_postlock_io_num);
+  }
+
   SUBTRACET(seastore_t, "entering prepare", tref);
   auto prepare_enter_start = std::chrono::steady_clock::now();
   co_await trans_intr::make_interruptible(
@@ -639,12 +656,6 @@ TransactionManager::do_submit_transaction(
     journal->get_trimmer().get_dirty_tail());
   tref.get_phase_durations().prepare_record +=
     std::chrono::steady_clock::now() - prepare_record_start;
-
-  tref.get_handle().maybe_release_collection_lock();
-  if (tref.get_src() == Transaction::src_t::MUTATE) {
-    --(shard_stats.processing_inlock_io_num);
-    ++(shard_stats.processing_postlock_io_num);
-  }
 
   // Option 1: single-record OOL writes had their addresses assigned under the
   // collection lock (so prepare_record could run) but their device-write
