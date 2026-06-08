@@ -213,6 +213,34 @@ class Btree {
     );
   }
 
+  /// Find with a leaf laddr hint to skip root-to-leaf traversal.
+  /// Falls back to find() if the hint is stale or the load fails.
+  eagain_ifuture<Cursor> find_with_hint(
+      Transaction& t, const ghobject_t& obj, laddr_t leaf_laddr)
+  {
+    return seastar::do_with(
+      key_hobj_t{obj}, ghobject_t{obj},
+      [this, &t, leaf_laddr](auto& key, auto& obj_copy) -> eagain_ifuture<Cursor>
+    {
+      return Node::load_leaf_for_hint(get_context(t), leaf_laddr)
+      .si_then([this, &t, &key, &obj_copy](Ref<LeafNode> leaf)
+                 -> eagain_ifuture<Cursor>
+      {
+        if (!leaf) {
+          return find(t, obj_copy);
+        }
+        return leaf->lower_bound(get_context(t), key)
+        .si_then([this, &t, &obj_copy](auto result) -> eagain_ifuture<Cursor> {
+          if (result.match() == MatchKindBS::EQ) {
+            return seastar::make_ready_future<Cursor>(
+              Cursor{this, result.p_cursor});
+          }
+          return find(t, obj_copy);
+        });
+      });
+    });
+  }
+
   /**
    * lower_bound
    *

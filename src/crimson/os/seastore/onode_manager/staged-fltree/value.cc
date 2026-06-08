@@ -42,6 +42,12 @@ void Value::invalidate()
   p_cursor.reset();
 }
 
+laddr_t Value::get_leaf_laddr() const
+{
+  assert(is_tracked());
+  return p_cursor->get_leaf_laddr();
+}
+
 eagain_ifuture<> Value::extend(Transaction& t, value_size_t extend_size)
 {
   assert(is_tracked());

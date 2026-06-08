@@ -217,6 +217,8 @@ class Value {
   bool operator==(const Value& v) const { return p_cursor == v.p_cursor; }
   bool operator!=(const Value& v) const { return !(*this == v); }
 
+  laddr_t get_leaf_laddr() const;
+
  protected:
   Value(NodeExtentManager&, const ValueBuilder&, Ref<tree_cursor_t>&);
 

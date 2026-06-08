@@ -139,6 +139,12 @@ std::strong_ordering tree_cursor_t::compare_to(
   return ret;
 }
 
+laddr_t tree_cursor_t::get_leaf_laddr() const
+{
+  assert(is_tracked() || is_end());
+  return ref_leaf_node->get_laddr();
+}
+
 eagain_ifuture<>
 tree_cursor_t::extend_value(context_t c, value_size_t extend_size)
 {
@@ -741,6 +747,44 @@ eagain_ifuture<Ref<Node>> Node::load(
     } else {
       ceph_abort_msg("impossible path");
     }
+  });
+}
+
+laddr_t Node::get_laddr() const
+{
+  return impl->laddr();
+}
+
+eagain_ifuture<Ref<LeafNode>> Node::load_leaf_for_hint(
+    context_t c, laddr_t addr)
+{
+  LOG_PREFIX(OTree::Node::load_leaf_for_hint);
+  return c.nm.read_extent(c.t, addr
+  ).handle_error_interruptible(
+    eagain_iertr::pass_further{},
+    crimson::ct_error::all_same_way(
+      [](const auto&) {
+        return eagain_iertr::make_ready_future<NodeExtentRef>();
+      }
+    )
+  ).si_then([FNAME, c, addr](auto extent) -> eagain_ifuture<Ref<LeafNode>> {
+    if (!extent) {
+      return eagain_iertr::make_ready_future<Ref<LeafNode>>(Ref<LeafNode>());
+    }
+    auto header = extent->get_header();
+    auto field_type = header.get_field_type();
+    if (!field_type || header.get_node_type() != node_type_t::LEAF) {
+      WARNT("hint addr={} is not a leaf, falling back", c.t, addr);
+      return eagain_iertr::make_ready_future<Ref<LeafNode>>(Ref<LeafNode>());
+    }
+    if (unlikely(extent->get_length() != c.vb.get_leaf_node_size())) {
+      WARNT("hint addr={} leaf size mismatch, falling back", c.t, addr);
+      return eagain_iertr::make_ready_future<Ref<LeafNode>>(Ref<LeafNode>());
+    }
+    auto impl = LeafNodeImpl::load(extent, *field_type);
+    auto *derived_ptr = impl.get();
+    return eagain_iertr::make_ready_future<Ref<LeafNode>>(
+      Ref<LeafNode>(new LeafNode(derived_ptr, std::move(impl))));
   });
 }
 

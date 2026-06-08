@@ -321,6 +321,9 @@ public:
                       t, tname, ch->get_cid(), oid);
             return onode_manager->get_onode(t, oid
             ).si_then([&](auto onode) {
+              if (auto hint = onode->get_leaf_laddr_hint(); hint) {
+                onode_leaf_hints_[oid] = *hint;
+              }
               return seastar::do_with(std::move(onode), [&](auto& onode) {
                 return f(t, *onode);
               });
@@ -629,6 +632,8 @@ public:
 
     seastar::metrics::metric_group metrics;
     void register_metrics(store_index_t store_index);
+
+    mutable std::map<ghobject_t, laddr_t> onode_leaf_hints_;
 
     mutable shard_stats_t shard_stats;
     mutable seastar::lowres_clock::time_point last_tp =

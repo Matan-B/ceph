@@ -179,6 +179,25 @@ FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode(
   });
 }
 
+FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode_with_hint(
+  Transaction &trans,
+  const ghobject_t &hoid,
+  laddr_t leaf_laddr)
+{
+  LOG_PREFIX(FLTreeOnodeManager::get_onode_with_hint);
+  return tree.find_with_hint(
+    trans, hoid, leaf_laddr
+  ).si_then([this, &hoid, &trans, FNAME](auto cursor) -> get_onode_ret {
+    if (cursor == tree.end()) {
+      DEBUGT("no entry for {}", trans, hoid);
+      return crimson::ct_error::enoent::make();
+    }
+    auto val = OnodeRef(new FLTreeOnode(hoid.hobj, cursor.value()));
+    assert(val->get_clone_prefix());
+    return get_onode_iertr::make_ready_future<OnodeRef>(val);
+  });
+}
+
 namespace {
 struct ghobj_cmp_t {
   bool same_object;

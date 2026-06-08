@@ -126,6 +126,8 @@ class tree_cursor_t final
 
   std::strong_ordering compare_to(const tree_cursor_t&, value_magic_t) const;
 
+  laddr_t get_leaf_laddr() const;
+
   // public to Value
 
   /// Get the latest value_header_t pointer for read.
@@ -376,6 +378,13 @@ class Node
 
   /// Loads the tree root. The tree must be initialized.
   static eagain_ifuture<Ref<Node>> load_root(context_t, RootNodeTracker&);
+
+  /// Returns the logical address of this node's extent.
+  laddr_t get_laddr() const;
+
+  /// Loads a leaf node directly by laddr without full tree traversal.
+  /// Returns an empty Ref on failure (stale hint, invalid extent).
+  static eagain_ifuture<Ref<LeafNode>> load_leaf_for_hint(context_t, laddr_t);
 
   // Only for unit test purposes.
   void test_make_destructable(context_t, NodeExtentMutable&, Super::URef&&);

@@ -130,6 +130,10 @@ struct FLTreeOnode final : Onode, Value {
   bool is_alive() const {
     return status != status_t::DELETED;
   }
+  std::optional<laddr_t> get_leaf_laddr_hint() const final {
+    if (is_tracked()) return Value::get_leaf_laddr();
+    return std::nullopt;
+  }
   const onode_layout_t &get_layout() const final {
     assert(status != status_t::DELETED);
     return *read_payload<onode_layout_t>();
@@ -417,6 +421,11 @@ public:
   get_onode_ret get_onode(
     Transaction &trans,
     const ghobject_t &hoid) final;
+
+  get_onode_ret get_onode_with_hint(
+    Transaction &trans,
+    const ghobject_t &hoid,
+    laddr_t leaf_laddr);
 
   get_or_create_onode_ret get_or_create_onode(
     Transaction &trans,

@@ -119,6 +119,7 @@ public:
 
   virtual bool is_alive() const = 0;
   virtual const onode_layout_t &get_layout() const = 0;
+  virtual std::optional<laddr_t> get_leaf_laddr_hint() const { return std::nullopt; }
   virtual ~Onode() = default;
 
   const hobject_t &get_hobj() const {
