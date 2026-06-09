@@ -10,7 +10,8 @@ namespace crimson::os::seastore {
 
 struct ExtentPinboard {
   virtual ~ExtentPinboard() = default;
-  virtual void register_metrics(store_index_t store_index) = 0;
+  virtual void register_metrics(store_index_t store_index,
+                               const std::string& prefix = "") = 0;
   virtual void move_to_top(
     CachedExtent &extent,
     const Transaction::src_t *p_src,
@@ -28,6 +29,8 @@ struct ExtentPinboard {
     extent_len_t increased_length,
     const Transaction::src_t *p_src) = 0;
   virtual void clear() = 0;
+  virtual uint64_t& hits_ref(extent_types_t t) = 0;
+  virtual uint64_t& misses_ref(extent_types_t t) = 0;
 };
 using ExtentPinboardRef = std::unique_ptr<ExtentPinboard>;
 ExtentPinboardRef create_extent_pinboard(std::size_t capacity);

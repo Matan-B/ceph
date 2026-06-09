@@ -1692,8 +1692,12 @@ private:
       return;
     }
     if (ext.is_stable_clean()) {
-      pinboard->move_to_top(ext, p_src, load_start, load_length);
+      get_pinboard_for_type(ext.get_type()).move_to_top(ext, p_src, load_start, load_length);
     }
+  }
+
+  ExtentPinboard& get_pinboard_for_type(extent_types_t t) {
+    return *pinboard;
   }
 
   ExtentPlacementManager& epm;
