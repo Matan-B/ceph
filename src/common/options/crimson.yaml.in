@@ -208,6 +208,13 @@ options:
   level: advanced
   desc: Size in bytes of extents to keep in cache (per reactor).
   default: 2_G
+- name: seastore_onode_cache_size_pershard
+  type: size
+  level: advanced
+  desc: Size in bytes of onode extents to keep in a dedicated cache (per reactor).
+        Onode extents are stored separately to prevent LBA/backref traffic from
+        evicting them.
+  default: 64_M
 - name: seastore_cachepin_type
   type: str
   level: dev

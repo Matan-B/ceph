@@ -35,7 +35,10 @@ Cache::Cache(
   : epm(epm),
     pinboard(create_extent_pinboard(
       crimson::common::get_conf<Option::size_t>(
-       "seastore_cachepin_size_pershard")))
+       "seastore_cachepin_size_pershard"))),
+    onode_pinboard(create_extent_pinboard(
+      crimson::common::get_conf<Option::size_t>(
+       "seastore_onode_cache_size_pershard")))
 {
   register_metrics(store_index);
   segment_providers_by_device_id.resize(DEVICE_ID_MAX, nullptr);
@@ -533,6 +536,7 @@ void Cache::register_metrics(store_index_t store_index)
   );
 
   pinboard->register_metrics(store_index);
+  onode_pinboard->register_metrics(store_index, "onode_");
 
   for (auto& [ext, ext_label] : labels_by_ext) {
     metrics.add_group(
@@ -788,7 +792,7 @@ void Cache::mark_dirty(CachedExtentRef ref)
     return;
   }
 
-  pinboard->remove(*ref);
+  get_pinboard(*ref).remove(*ref);
   ref->state = CachedExtent::extent_state_t::DIRTY;
   add_to_dirty(ref, nullptr);
 }
@@ -917,7 +921,7 @@ void Cache::remove_extent(
     remove_from_dirty(ref, p_src);
   } else {
     assert(ref->get_paddr().is_absolute());
-    pinboard->remove(*ref);
+    get_pinboard(*ref).remove(*ref);
   }
   if (ref->is_linked_to_index()) {
     extents_index.erase(*ref);
@@ -953,7 +957,7 @@ void Cache::stage_visibility_handoff(
 
   bool was_stable_dirty = prev->is_stable_dirty();
   if (!was_stable_dirty) {
-    pinboard->remove(*prev);
+    get_pinboard(*prev).remove(*prev);
   }
 
   // Block prev/prior into an io-wait state so anyone waiting on
@@ -994,7 +998,7 @@ void Cache::commit_replace_extent(
   } else if (prev->is_stable_dirty()) {
     replace_dirty(next, prev, t_src);
   } else {
-    pinboard->remove(*prev);
+    get_pinboard(*prev).remove(*prev);
     add_to_dirty(next, &t_src);
   }
 
@@ -2245,13 +2249,16 @@ Cache::close_ertr::future<> Cache::close()
 {
   LOG_PREFIX(Cache::close);
   INFO("close with {}({}B) dirty, dirty_from={}, alloc_from={}, "
-       "{}({}B) pinned extents, totally {}({}B) indexed extents",
+       "{}({}B) pinned extents, {}({}B) pinned onode extents, "
+       "totally {}({}B) indexed extents",
        dirty.size(),
        stats.dirty_bytes,
        get_oldest_dirty_from().value_or(JOURNAL_SEQ_NULL),
        get_oldest_backref_dirty_from().value_or(JOURNAL_SEQ_NULL),
        pinboard->get_current_num_extents(),
        pinboard->get_current_size_bytes(),
+       onode_pinboard->get_current_num_extents(),
+       onode_pinboard->get_current_size_bytes(),
        extents_index.size(),
        extents_index.get_bytes());
   root.reset();
@@ -2259,6 +2266,7 @@ Cache::close_ertr::future<> Cache::close()
   backref_extents.clear();
   backref_entryrefs_by_seq.clear();
   pinboard->clear();
+  onode_pinboard->clear();
   return close_ertr::now();
 }
 
@@ -2775,6 +2783,9 @@ cache_stats_t Cache::get_stats(
 
   cache_stats_t ret;
   pinboard->get_stats(ret, report_detail, seconds);
+  cache_stats_t onode_stats;
+  onode_pinboard->get_stats(onode_stats, report_detail, seconds);
+  ret.add(onode_stats);
 
   /*
    * dirty stats

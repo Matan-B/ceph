@@ -1697,6 +1697,9 @@ private:
   }
 
   ExtentPinboard& get_pinboard_for_type(extent_types_t t) {
+    if (t == extent_types_t::ONODE_BLOCK_STAGED) {
+      return *onode_pinboard;
+    }
     return *pinboard;
   }
 
@@ -1752,6 +1755,7 @@ private:
   friend class crimson::os::seastore::BackrefManager;
 
   ExtentPinboardRef pinboard;
+  ExtentPinboardRef onode_pinboard;
 
   btree_cursor_stats_t cursor_stats;
   struct invalid_trans_efforts_t {
@@ -1998,7 +2002,7 @@ void stage_visibility_handoff(Transaction& t,
     auto new_length = extent->get_loaded_length();
     bool extent_fully_loaded = extent->is_fully_loaded();
     assert(new_length > old_length);
-    pinboard->increase_cached_size(*extent, new_length - old_length, p_src);
+    get_pinboard(*extent).increase_cached_size(*extent, new_length - old_length, p_src);
     return seastar::do_with(to_read.ranges, [extent, this, FNAME](auto &read_ranges) {
       return ExtentPlacementManager::read_ertr::parallel_for_each(
           read_ranges, [extent, this, FNAME](auto &read_range) {
@@ -2117,7 +2121,7 @@ void stage_visibility_handoff(Transaction& t,
       load_ranges_t to_read = extent->load_ranges(ext.offset, ext.length);
       auto new_length = extent->get_loaded_length();
       assert(new_length > old_length);
-      pinboard->increase_cached_size(*extent, new_length - old_length, &t_src);
+      get_pinboard(*extent).increase_cached_size(*extent, new_length - old_length, &t_src);
       for (auto &range : to_read.ranges) {
 	auto range_paddr = extent->get_paddr() + range.offset;
 	ranges_to_read.emplace_back(range_to_read_t{range_paddr, range});
