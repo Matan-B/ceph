@@ -1702,6 +1702,9 @@ private:
     }
     return *pinboard;
   }
+  ExtentPinboard& get_pinboard(const CachedExtent &ext) {
+    return get_pinboard_for_type(ext.get_type());
+  }
 
   ExtentPlacementManager& epm;
   RootBlockRef root;               ///< ref to current root
