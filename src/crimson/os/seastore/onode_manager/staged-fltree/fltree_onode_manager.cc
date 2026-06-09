@@ -198,6 +198,26 @@ FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode_with_hint(
   });
 }
 
+FLTreeOnodeManager::get_or_create_onode_ret
+FLTreeOnodeManager::get_or_create_onode_with_hint(
+  Transaction &trans,
+  const ghobject_t &hoid,
+  laddr_t leaf_laddr)
+{
+  LOG_PREFIX(FLTreeOnodeManager::get_or_create_onode_with_hint);
+  return tree.find_with_hint(
+    trans, hoid, leaf_laddr
+  ).si_then([this, &hoid, &trans, FNAME](auto cursor) -> get_or_create_onode_ret {
+    if (cursor == tree.end()) {
+      DEBUGT("hint miss for {}, falling back to get_or_create", trans, hoid);
+      return get_or_create_onode(trans, hoid);
+    }
+    auto val = OnodeRef(new FLTreeOnode(hoid.hobj, cursor.value()));
+    assert(val->get_clone_prefix());
+    return get_or_create_onode_iertr::make_ready_future<OnodeRef>(val);
+  });
+}
+
 namespace {
 struct ghobj_cmp_t {
   bool same_object;

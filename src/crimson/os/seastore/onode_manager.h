@@ -56,6 +56,13 @@ public:
     Transaction &trans,
     const ghobject_t &hoid) = 0;
 
+  virtual get_or_create_onode_ret get_or_create_onode_with_hint(
+    Transaction &trans,
+    const ghobject_t &hoid,
+    laddr_t leaf_laddr) {
+    return get_or_create_onode(trans, hoid);
+  }
+
   using get_or_create_onodes_iertr = base_iertr::extend<
     crimson::ct_error::value_too_large>;
   using get_or_create_onodes_ret = get_or_create_onodes_iertr::future<

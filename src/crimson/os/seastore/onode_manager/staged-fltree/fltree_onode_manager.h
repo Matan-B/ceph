@@ -427,6 +427,11 @@ public:
     const ghobject_t &hoid,
     laddr_t leaf_laddr);
 
+  get_or_create_onode_ret get_or_create_onode_with_hint(
+    Transaction &trans,
+    const ghobject_t &hoid,
+    laddr_t leaf_laddr) final;
+
   get_or_create_onode_ret get_or_create_onode(
     Transaction &trans,
     const ghobject_t &hoid) final;

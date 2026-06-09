@@ -1891,11 +1891,18 @@ SeaStore::Shard::_do_transaction_step(
     const ghobject_t& oid = i.get_oid(op->oid);
     auto t0 = std::chrono::steady_clock::now();
     auto hint_it = onode_leaf_hints_.find(oid);
-    if (!create && hint_it != onode_leaf_hints_.end()) {
-      DEBUGT("op {}, get_with_hint oid={} leaf_laddr={} ...",
-             *ctx.transaction, (uint32_t)op->op, oid, hint_it->second);
-      fut = onode_manager->get_onode_with_hint(
-        *ctx.transaction, oid, hint_it->second);
+    if (hint_it != onode_leaf_hints_.end()) {
+      if (!create) {
+        DEBUGT("op {}, get_with_hint oid={} leaf_laddr={} ...",
+               *ctx.transaction, (uint32_t)op->op, oid, hint_it->second);
+        fut = onode_manager->get_onode_with_hint(
+          *ctx.transaction, oid, hint_it->second);
+      } else {
+        DEBUGT("op {}, get_or_create_with_hint oid={} leaf_laddr={} ...",
+               *ctx.transaction, (uint32_t)op->op, oid, hint_it->second);
+        fut = onode_manager->get_or_create_onode_with_hint(
+          *ctx.transaction, oid, hint_it->second);
+      }
     } else if (!create) {
       DEBUGT("op {}, get oid={} ...",
              *ctx.transaction, (uint32_t)op->op, oid);
