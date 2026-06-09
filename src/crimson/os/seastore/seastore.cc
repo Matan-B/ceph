@@ -1912,8 +1912,11 @@ SeaStore::Shard::_do_transaction_step(
              *ctx.transaction, (uint32_t)op->op, oid);
       fut = onode_manager->get_or_create_onode(*ctx.transaction, oid);
     }
-    fut = std::move(fut).si_then([&ctx, t0](auto onode) {
+    fut = std::move(fut).si_then([this, &ctx, t0, oid](auto onode) {
       ctx.get_onode_time += std::chrono::steady_clock::now() - t0;
+      if (auto hint = onode->get_leaf_laddr_hint(); hint) {
+        onode_leaf_hints_[oid] = *hint;
+      }
       return onode_iertr::make_ready_future<OnodeRef>(std::move(onode));
     });
   }
