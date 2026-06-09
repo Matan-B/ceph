@@ -179,11 +179,18 @@ ReplicatedBackend::submit_transaction(
     txn,
     false);
 
+  // Pass the onode cached during OBC load to SeaStore so the first write
+  // skips the fltree traversal entirely.
+  auto onode_slot = std::make_shared<ceph::os::Transaction::OnodeCacheSlot>();
+  onode_slot->oid = ghobject_t{hoid};
+  onode_slot->onode = obc->cached_onode;
+  txn.onode_cache = onode_slot;
+
   auto all_completed = interruptor::make_interruptible(
     crimson::os::with_store_do_transaction(
       shard_services.get_store(pg.get_store_index()),
       coll, std::move(txn))
-   ).then_interruptible([FNAME, this,
+   ).then_interruptible([FNAME, this, obc,
 			peers=pending_txn->second.weak_from_this()] {
     if (!peers) {
       // for now, only actingset_changed can cause peers

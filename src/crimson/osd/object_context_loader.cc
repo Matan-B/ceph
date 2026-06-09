@@ -187,6 +187,7 @@ ObjectContextLoader::load_obc(
     obc->set_clone_state(std::move(md->os));
   }
   obc->attr_cache = std::move(md->attr_cache);
+  obc->cached_onode = std::move(md->cached_onode);
   DEBUGDPP("loaded obc {} for {}", dpp, obc->obs.oi, obc->obs.oi.soid);
 }
 

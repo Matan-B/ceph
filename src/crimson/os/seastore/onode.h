@@ -119,6 +119,9 @@ public:
 
   virtual bool is_alive() const = 0;
   virtual const onode_layout_t &get_layout() const = 0;
+  // True if this onode object can be reused across transaction boundaries
+  // without a new fltree traversal. SeaStore/fltree overrides this.
+  virtual bool is_reusable() const { return false; }
   virtual ~Onode() = default;
 
   const hobject_t &get_hobj() const {

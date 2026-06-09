@@ -1457,6 +1457,39 @@ SeaStore::Shard::get_attrs(
   });
 }
 
+SeaStore::Shard::get_attrs_ertr::future<
+    std::pair<SeaStore::Shard::attrs_t, std::shared_ptr<void>>>
+SeaStore::Shard::get_attrs_with_onode(
+  CollectionRef ch,
+  const ghobject_t& oid,
+  uint32_t op_flags)
+{
+  assert(store_active);
+  ++(shard_stats.read_num);
+  ++(shard_stats.pending_read_num);
+  // Indirect through shared_ptr so both lambdas below cheaply share the slot.
+  // On conflict retry, f overwrites *captured with the new onode — that's fine.
+  auto captured = std::make_shared<std::shared_ptr<void>>();
+  return repeat_with_onode<attrs_t>(
+    ch, oid, Transaction::src_t::READ, "get_attrs",
+    op_type_t::GET_ATTRS, op_flags,
+    [this, captured](auto& t, auto& onode) {
+      *captured = std::static_pointer_cast<void>(
+          std::make_shared<OnodeRef>(&onode));
+      return _get_attrs(t, onode);
+    }
+  ).safe_then([captured](attrs_t attrs) {
+    return std::make_pair(std::move(attrs), std::move(*captured));
+  }).handle_error(
+    crimson::ct_error::input_output_error::assert_failure{
+      "EIO when getting attrs"},
+    crimson::ct_error::pass_further_all{}
+  ).finally([this] {
+    assert(shard_stats.pending_read_num);
+    --(shard_stats.pending_read_num);
+  });
+}
+
 seastar::future<struct stat> SeaStore::Shard::_stat(
   Transaction& t,
   Onode& onode,
@@ -1890,19 +1923,36 @@ SeaStore::Shard::_do_transaction_step(
   if (!onodes[op->oid]) {
     const ghobject_t& oid = i.get_oid(op->oid);
     auto t0 = std::chrono::steady_clock::now();
-    if (!create) {
-      DEBUGT("op {}, get oid={} ...",
-             *ctx.transaction, (uint32_t)op->op, oid);
-      fut = onode_manager->get_onode(*ctx.transaction, oid);
-    } else {
-      DEBUGT("op {}, get_or_create oid={} ...",
-             *ctx.transaction, (uint32_t)op->op, oid);
-      fut = onode_manager->get_or_create_onode(*ctx.transaction, oid);
+    auto& slot = ctx.ext_transaction.onode_cache;
+
+    // Fast path: reuse the live onode cached by the OBC from a prior lookup.
+    bool used_cache = false;
+    if (slot && slot->oid == oid && slot->onode) {
+      auto sp = std::static_pointer_cast<OnodeRef>(slot->onode);
+      if ((*sp)->is_reusable()) {
+        DEBUGT("op {}, cached onode oid={}", *ctx.transaction,
+               (uint32_t)op->op, oid);
+        ctx.get_onode_time += std::chrono::steady_clock::now() - t0;
+        fut = onode_iertr::make_ready_future<OnodeRef>(*sp);
+        used_cache = true;
+      }
     }
-    fut = std::move(fut).si_then([&ctx, t0](auto onode) {
-      ctx.get_onode_time += std::chrono::steady_clock::now() - t0;
-      return onode_iertr::make_ready_future<OnodeRef>(std::move(onode));
-    });
+
+    if (!used_cache) {
+      if (!create) {
+        DEBUGT("op {}, get oid={} ...",
+               *ctx.transaction, (uint32_t)op->op, oid);
+        fut = onode_manager->get_onode(*ctx.transaction, oid);
+      } else {
+        DEBUGT("op {}, get_or_create oid={} ...",
+               *ctx.transaction, (uint32_t)op->op, oid);
+        fut = onode_manager->get_or_create_onode(*ctx.transaction, oid);
+      }
+      fut = std::move(fut).si_then([&ctx, t0](auto onode) {
+        ctx.get_onode_time += std::chrono::steady_clock::now() - t0;
+        return onode_iertr::make_ready_future<OnodeRef>(std::move(onode));
+      });
+    }
   }
   return fut.si_then([&, op, this, FNAME](auto get_onode)
                       -> OnodeManager::get_or_create_onode_iertr::future<> {

@@ -254,6 +254,16 @@ private:
   std::list<Context *> on_applied_sync;
 
 public:
+  // Non-serialized: live onode object shared between OSD and local store to
+  // eliminate repeated fltree traversals.  Both sides hold a shared_ptr to
+  // this slot; the store validates the cached onode with is_reusable() and
+  // writes the resolved onode back so the OSD can update the OBC.
+  // Ignored on encode; other stores leave this null.
+  struct OnodeCacheSlot {
+    ghobject_t oid;
+    std::shared_ptr<void> onode;  // concrete type is store-internal
+  };
+  std::shared_ptr<OnodeCacheSlot> onode_cache;
   Transaction() = default;
   explicit Transaction(uint64_t data_features)
     : data_features(data_features) {
@@ -272,7 +282,8 @@ public:
     op_bl(std::move(other.op_bl)),
     on_applied(std::move(other.on_applied)),
     on_commit(std::move(other.on_commit)),
-    on_applied_sync(std::move(other.on_applied_sync)) {
+    on_applied_sync(std::move(other.on_applied_sync)),
+    onode_cache(std::move(other.onode_cache)) {
     other.coll_id = 0;
     other.object_id = 0;
   }
@@ -290,6 +301,7 @@ public:
     on_applied = std::move(other.on_applied);
     on_commit = std::move(other.on_commit);
     on_applied_sync = std::move(other.on_applied_sync);
+    onode_cache = std::move(other.onode_cache);
     other.coll_id = 0;
     other.object_id = 0;
     return *this;
