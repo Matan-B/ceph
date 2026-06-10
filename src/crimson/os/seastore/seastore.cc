@@ -1948,8 +1948,18 @@ SeaStore::Shard::_do_transaction_step(
                *ctx.transaction, (uint32_t)op->op, oid);
         fut = onode_manager->get_or_create_onode(*ctx.transaction, oid);
       }
-      fut = std::move(fut).si_then([&ctx, t0](auto onode) {
+      // Write the resolved onode back into the slot so replicated_backend
+      // can propagate it to the OBC after commit (covers new-object writes
+      // where the OBC was loaded before the object existed).
+      bool populate_slot = slot && slot->oid == oid;
+      fut = std::move(fut).si_then([&ctx, t0, slot_ref=slot,
+                                    populate_slot, FNAME](auto onode) {
         ctx.get_onode_time += std::chrono::steady_clock::now() - t0;
+        if (populate_slot) {
+          DEBUGT("[onode_cache] stored resolved onode in slot",
+                 *ctx.transaction);
+          slot_ref->resolved_onode = std::make_shared<OnodeRef>(onode);
+        }
         return onode_iertr::make_ready_future<OnodeRef>(std::move(onode));
       });
     }

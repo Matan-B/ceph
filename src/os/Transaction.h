@@ -257,11 +257,17 @@ public:
   // Non-serialized: live onode object shared between OSD and local store to
   // eliminate repeated fltree traversals.  Both sides hold a shared_ptr to
   // this slot; the store validates the cached onode with is_reusable() and
-  // writes the resolved onode back so the OSD can update the OBC.
-  // Ignored on encode; other stores leave this null.
+  // Carries a pre-resolved onode into SeaStore and returns the result back to
+  // the OSD after commit. Ignored on encode; other stores leave this null.
   struct OnodeCacheSlot {
     ghobject_t oid;
-    std::shared_ptr<void> onode;  // concrete type is store-internal
+    // Input: onode from a prior committed transaction (set by replicated_backend
+    // from obc->cached_onode before submit). Read-only during the transaction.
+    std::shared_ptr<void> onode;
+    // Output: onode resolved by the miss path inside this transaction. Written
+    // by _do_transaction_step; never used as a cache input (so transaction
+    // retries never see a stale hit from an uncommitted onode).
+    std::shared_ptr<void> resolved_onode;
   };
   std::shared_ptr<OnodeCacheSlot> onode_cache;
   Transaction() = default;
