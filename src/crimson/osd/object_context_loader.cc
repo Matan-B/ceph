@@ -27,6 +27,9 @@ ObjectContextLoader::load_and_lock_head(Manager &manager, RWState::State lock_ty
   }
 
   if (manager.target_state.obc->loading_started) {
+    DEBUGDPP("[onode_cache] OBC hot for {}, cached_onode={}",
+             dpp, manager.target,
+             manager.target_state.obc->cached_onode ? "present" : "absent");
     co_await manager.target_state.lock_to(lock_type);
   } else {
     manager.target_state.lock_excl_sync();
@@ -188,6 +191,9 @@ ObjectContextLoader::load_obc(
   }
   obc->attr_cache = std::move(md->attr_cache);
   obc->cached_onode = std::move(md->cached_onode);
+  if (obc->cached_onode) {
+    DEBUGDPP("[onode_cache] cached from OBC load for {}", dpp, oid);
+  }
   DEBUGDPP("loaded obc {} for {}", dpp, obc->obs.oi, obc->obs.oi.soid);
 }
 
