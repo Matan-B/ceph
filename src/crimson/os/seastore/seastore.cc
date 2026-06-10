@@ -1966,7 +1966,7 @@ SeaStore::Shard::_do_transaction_step(
         if (populate_slot) {
           DEBUGT("[onode_cache] stored resolved onode in slot",
                  *ctx.transaction);
-          slot_ref->onode = std::make_shared<OnodeRef>(onode);
+          slot_ref->resolved_onode = std::make_shared<OnodeRef>(onode);
         }
         return onode_iertr::make_ready_future<OnodeRef>(std::move(onode));
       });

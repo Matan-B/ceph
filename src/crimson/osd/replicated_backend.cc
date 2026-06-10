@@ -192,10 +192,11 @@ ReplicatedBackend::submit_transaction(
       coll, std::move(txn))
    ).then_interruptible([FNAME, this, obc, onode_slot,
 			peers=pending_txn->second.weak_from_this()] {
-    // Write-back: if the transaction resolved an onode that the OBC didn't
-    // have (new-object write), cache it now for the next write.
-    if (onode_slot->onode) {
-      obc->cached_onode = onode_slot->onode;
+    // Write-back: if the miss path resolved a new onode, promote it to the
+    // OBC now that the transaction has committed. resolved_onode is never
+    // used as a cache input, so transaction retries can't produce stale hits.
+    if (onode_slot->resolved_onode) {
+      obc->cached_onode = onode_slot->resolved_onode;
     }
     if (!peers) {
       // for now, only actingset_changed can cause peers
