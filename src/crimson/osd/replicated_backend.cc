@@ -190,8 +190,13 @@ ReplicatedBackend::submit_transaction(
     crimson::os::with_store_do_transaction(
       shard_services.get_store(pg.get_store_index()),
       coll, std::move(txn))
-   ).then_interruptible([FNAME, this, obc,
+   ).then_interruptible([FNAME, this, obc, onode_slot,
 			peers=pending_txn->second.weak_from_this()] {
+    // Write-back: if the transaction resolved an onode that the OBC didn't
+    // have (new-object write), cache it now for the next write.
+    if (onode_slot->onode) {
+      obc->cached_onode = onode_slot->onode;
+    }
     if (!peers) {
       // for now, only actingset_changed can cause peers
       // to be nullptr

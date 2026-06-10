@@ -31,17 +31,6 @@ ObjectContextLoader::load_and_lock_head(Manager &manager, RWState::State lock_ty
              dpp, manager.target,
              manager.target_state.obc->cached_onode ? "present" : "absent");
     co_await manager.target_state.lock_to(lock_type);
-    if (lock_type == RWState::RWWRITE &&
-        !manager.target_state.obc->cached_onode) {
-      // OBC was loaded when the object didn't exist yet (new block).
-      // Re-run load_metadata now that it exists to capture the onode.
-      // lock_to() must precede this because load_obc calls set_head_state
-      // which asserts assert_locked().
-      DEBUGDPP("[onode_cache] demand reload for {}", dpp, manager.target);
-      co_await load_obc(
-        manager.target_state.obc,
-        backend.load_metadata(manager.target_state.obc->get_oid()));
-    }
   } else {
     manager.target_state.lock_excl_sync();
     manager.target_state.obc->loading_started = true;
