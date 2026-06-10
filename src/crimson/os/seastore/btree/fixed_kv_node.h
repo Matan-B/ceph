@@ -82,7 +82,7 @@ struct FixedKVNode : CachedExtent {
     }
   }
 
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_write(paddr_t record_block_offset) override {
     // All in-memory relative addrs are necessarily record-relative
     assert(get_prior_instance());
     assert(pending_for_transaction);
@@ -209,6 +209,13 @@ struct FixedKVInternalNode
     }
   }
 
+  void on_delta_write(paddr_t record_block_offset) final {
+    FixedKVNode<NODE_KEY>::on_delta_write(record_block_offset);
+    if (this->is_btree_root()) {
+      this->root_node_t::commit_root_link();
+    }
+  }
+
   void on_data_commit() final {
     this->set_layout_buf(this->get_bptr().c_str());
   }
@@ -235,7 +242,7 @@ struct FixedKVInternalNode
 
   typename node_layout_t::delta_buffer_t delta_buffer;
   typename node_layout_t::delta_buffer_t *maybe_get_delta_buffer() {
-    return this->is_mutation_pending() 
+    return this->is_mutation_pending()
 	    ? &delta_buffer : nullptr;
   }
 
@@ -645,6 +652,13 @@ struct FixedKVLeafNode
     this->resolve_relative_addrs(this->get_paddr());
     if (this->is_btree_root()) {
       this->root_node_t::on_initial_write();
+    }
+  }
+
+  void on_delta_write(paddr_t record_block_offset) final {
+    FixedKVNode<NODE_KEY>::on_delta_write(record_block_offset);
+    if (this->is_btree_root()) {
+      this->root_node_t::commit_root_link();
     }
   }
 

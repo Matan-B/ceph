@@ -119,12 +119,19 @@ protected:
     ceph_assert(prior.parent_of_root);
     ceph_assert(me.pending_for_transaction);
     parent_of_root = prior.parent_of_root;
-    TreeRootLinker<ParentT, T>::link_root(parent_of_root, &me);
+    // link_root is deferred to commit time (on_delta_write); updating it
+    // here would expose the MUTATION_PENDING node to concurrent transactions
+    // via the shared stable root_block's lba_root_node pointer.
     return;
   }
 
   void on_replace_prior() {
     set_root_parent_from_prior_instance();
+  }
+
+  void commit_root_link() {
+    ceph_assert(parent_of_root);
+    TreeRootLinker<ParentT, T>::link_root(parent_of_root, &down_cast());
   }
 
   void destroy() {
