@@ -1930,12 +1930,20 @@ SeaStore::Shard::_do_transaction_step(
     if (slot && slot->oid == oid && slot->onode) {
       auto sp = std::static_pointer_cast<OnodeRef>(slot->onode);
       if ((*sp)->is_reusable()) {
-        DEBUGT("op {}, cached onode oid={}", *ctx.transaction,
-               (uint32_t)op->op, oid);
+        DEBUGT("[onode_cache] hit oid={}", *ctx.transaction, oid);
         ctx.get_onode_time += std::chrono::steady_clock::now() - t0;
         fut = onode_iertr::make_ready_future<OnodeRef>(*sp);
         used_cache = true;
+      } else {
+        DEBUGT("[onode_cache] stale (cursor invalidated) oid={}", *ctx.transaction, oid);
       }
+    } else if (slot && slot->oid == oid && !slot->onode) {
+      DEBUGT("[onode_cache] miss (slot empty) oid={}", *ctx.transaction, oid);
+    } else if (slot && slot->oid != oid) {
+      DEBUGT("[onode_cache] miss (slot oid mismatch slot={} op={})",
+             *ctx.transaction, slot->oid, oid);
+    } else {
+      DEBUGT("[onode_cache] miss (no slot) oid={}", *ctx.transaction, oid);
     }
 
     if (!used_cache) {
