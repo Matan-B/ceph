@@ -1693,16 +1693,13 @@ seastar::future<> SeaStore::Shard::do_transaction_no_callbacks(
 
   auto t_pre_collock = std::chrono::steady_clock::now();
 
-  co_await ctx.transaction->get_handle().take_collection_lock(
-    static_cast<SeastoreCollection&>(*(ctx.ch)).ordering_lock
-  );
-
   // claim a submission-order slot in the collection's prepare-entry FIFO
   // so build/ool_write/lba_update now run concurrently across same-collection txns
   ctx.transaction->get_handle().claim_order_ticket(
     static_cast<SeastoreCollection&>(*(ctx.ch)).last_prepare_order_done
   );
 
+  // todo: remove/update collock_wait to match new per-coll tickets
   auto collock_wait = std::chrono::steady_clock::now() - t_pre_collock;
 
   assert(shard_stats.waiting_collock_io_num);

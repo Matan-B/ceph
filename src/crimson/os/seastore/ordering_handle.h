@@ -120,7 +120,6 @@ struct OrderingHandle {
   // we can easily optimize this dynalloc out as all concretes are
   // supposed to have exactly the same size.
   std::unique_ptr<OperationProxy> op;
-  seastar::shared_mutex *collection_ordering_lock = nullptr;
 
   // await it before entering the prepare phase
   std::optional<seastar::shared_future<>> wait_prev_prepare_record;
@@ -132,16 +131,8 @@ struct OrderingHandle {
   OrderingHandle(std::unique_ptr<OperationProxy> op) : op(std::move(op)) {}
   OrderingHandle(OrderingHandle &&other)
     : op(std::move(other.op)),
-      collection_ordering_lock(other.collection_ordering_lock),
       wait_prev_prepare_record(std::move(other.wait_prev_prepare_record)),
       signal_prepare_record_done(std::move(other.signal_prepare_record_done)) {
-    other.collection_ordering_lock = nullptr;
-  }
-
-  seastar::future<> take_collection_lock(seastar::shared_mutex &mutex) {
-    ceph_assert(!collection_ordering_lock);
-    collection_ordering_lock = &mutex;
-    return collection_ordering_lock->lock();
   }
 
   // claim a submission-order slot in the collection's prepare-entry FIFO.
@@ -160,13 +151,6 @@ struct OrderingHandle {
     }
   }
 
-  void maybe_release_collection_lock() {
-    if (collection_ordering_lock) {
-      collection_ordering_lock->unlock();
-      collection_ordering_lock = nullptr;
-    }
-  }
-
   template <typename T>
   seastar::future<> enter(T &t) {
     return op->enter(t);
@@ -182,7 +166,6 @@ struct OrderingHandle {
 
   ~OrderingHandle() {
     maybe_signal_prepare_record_done();
-    maybe_release_collection_lock();
   }
 };
 

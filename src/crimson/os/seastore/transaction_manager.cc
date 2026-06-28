@@ -648,7 +648,6 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().prepare_record +=
     std::chrono::steady_clock::now() - prepare_record_start;
 
-  tref.get_handle().maybe_release_collection_lock();
   tref.get_handle().maybe_signal_prepare_record_done();
   if (tref.get_src() == Transaction::src_t::MUTATE) {
     --(shard_stats.processing_inlock_io_num);
