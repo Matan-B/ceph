@@ -122,12 +122,19 @@ struct OrderingHandle {
   std::unique_ptr<OperationProxy> op;
   seastar::shared_mutex *collection_ordering_lock = nullptr;
 
+  // await it before entering the prepare phase
+  std::optional<seastar::shared_future<>> wait_prev_prepare_record;
+  // fulfilled at our release point to unblock the next txn in submission order.
+  std::unique_ptr<seastar::shared_promise<>> signal_prepare_record_done;
+
   // in the future we might add further constructors / template to type
   // erasure while extracting the location of tracking events.
   OrderingHandle(std::unique_ptr<OperationProxy> op) : op(std::move(op)) {}
   OrderingHandle(OrderingHandle &&other)
     : op(std::move(other.op)),
-      collection_ordering_lock(other.collection_ordering_lock) {
+      collection_ordering_lock(other.collection_ordering_lock),
+      wait_prev_prepare_record(std::move(other.wait_prev_prepare_record)),
+      signal_prepare_record_done(std::move(other.signal_prepare_record_done)) {
     other.collection_ordering_lock = nullptr;
   }
 
@@ -135,6 +142,22 @@ struct OrderingHandle {
     ceph_assert(!collection_ordering_lock);
     collection_ordering_lock = &mutex;
     return collection_ordering_lock->lock();
+  }
+
+  // claim a submission-order slot in the collection's prepare-entry FIFO.
+  void claim_order_ticket(seastar::shared_future<> &last_prepare_order_done) {
+    ceph_assert(!signal_prepare_record_done);
+    wait_prev_prepare_record = last_prepare_order_done;
+    signal_prepare_record_done = std::make_unique<seastar::shared_promise<>>();
+    last_prepare_order_done = signal_prepare_record_done->get_shared_future();
+  }
+
+  // Release our ordering successor
+  void maybe_signal_prepare_record_done() {
+    if (signal_prepare_record_done) {
+      signal_prepare_record_done->set_value();
+      signal_prepare_record_done.reset();
+    }
   }
 
   void maybe_release_collection_lock() {
@@ -158,6 +181,7 @@ struct OrderingHandle {
   }
 
   ~OrderingHandle() {
+    maybe_signal_prepare_record_done();
     maybe_release_collection_lock();
   }
 };

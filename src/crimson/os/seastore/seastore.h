@@ -70,6 +70,9 @@ public:
     FuturizedCollection(std::forward<T>(args)...) {}
 
   seastar::shared_mutex ordering_lock;
+
+  // per-collection prepare-entry FIFO.
+  seastar::shared_future<> last_prepare_order_done = seastar::make_ready_future<>();
 };
 
 /**
