@@ -1810,12 +1810,6 @@ seastar::future<> SeaStore::Shard::flush(CollectionRef ch)
   return seastar::do_with(
     get_dummy_ordering_handle(),
     [this, ch](auto &handle) {
-      return handle.take_collection_lock(
-	static_cast<SeastoreCollection&>(*ch).ordering_lock
-      ).then([this, &handle] {
-	return transaction_manager->flush(handle);
-      });
-
      handle.claim_order_ticket(
       // order flush via the per-collection prepare-entry FIFO.
       // Claiming a ticket here, in submission order, ensures flush follows every

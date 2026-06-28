@@ -700,7 +700,6 @@ seastar::future<> TransactionManager::flush(OrderingHandle &handle)
   }).then([this, &handle] {
     return handle.enter(write_pipeline.prepare);
   }).then([this, &handle] {
-    handle.maybe_release_collection_lock();
     handle.maybe_signal_prepare_record_done();
     return journal->flush(handle);
   }).then([FNAME, &handle] {
