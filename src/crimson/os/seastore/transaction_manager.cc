@@ -690,10 +690,18 @@ seastar::future<> TransactionManager::flush(OrderingHandle &handle)
   return handle.enter(write_pipeline.reserve_projected_usage
   ).then([this, &handle] {
     return handle.enter(write_pipeline.ool_writes_and_lba_updates);
+  }).then([&handle] {
+    // wait at the per-collection prepare gate so flush is ordered
+    // after all mutates submitted before it.
+    if (handle.wait_prev_prepare_record) {
+      return handle.wait_prev_prepare_record->get_future();
+    }
+    return seastar::make_ready_future<>();
   }).then([this, &handle] {
     return handle.enter(write_pipeline.prepare);
   }).then([this, &handle] {
     handle.maybe_release_collection_lock();
+    handle.maybe_signal_prepare_record_done();
     return journal->flush(handle);
   }).then([FNAME, &handle] {
     SUBDEBUG(seastore_t, "H{} completed", (void*)&handle);

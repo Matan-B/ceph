@@ -1815,6 +1815,14 @@ seastar::future<> SeaStore::Shard::flush(CollectionRef ch)
       ).then([this, &handle] {
 	return transaction_manager->flush(handle);
       });
+
+     handle.claim_order_ticket(
+      // order flush via the per-collection prepare-entry FIFO.
+      // Claiming a ticket here, in submission order, ensures flush follows every
+      // mutate submitted before it -- preserving flush's
+      // "prior transactions are durable" contract
+      static_cast<SeastoreCollection&>(*ch).last_prepare_order_done);
+      return transaction_manager->flush(handle);
     }
   ).finally([this] {
     assert(shard_stats.pending_flush_num);
