@@ -2530,6 +2530,22 @@ using lba_root_t = phy_tree_root_t;
 using backref_root_t = phy_tree_root_t;
 
 /**
+ * ONODE_TREE_SHARDS
+ *
+ * Number of static onode-tree shards. The onode keyspace is partitioned into
+ * this many independent b-trees (all layered on the one shared LBA) to remove
+ * cross-collection false conflicts on shared onode nodes. An object routes to a
+ * shard by a fixed function of its hash only (never PG identity/split_bits), so
+ * PG split/merge stay metadata-only. See FLTreeOnodeManager.
+ *
+ * NB: compile-time constant baked into root_t's on-disk layout (onode_root is a
+ * fixed array of this size). Changing it changes the root format -> requires
+ * re-mkfs. To make N a runtime knob, move the roots into a separate root-table
+ * extent instead of inlining them here.
+ */
+constexpr std::size_t ONODE_TREE_SHARDS = 8;
+
+/**
  * root_t
  *
  * Contains information required to find metadata roots.
@@ -2538,7 +2554,7 @@ using backref_root_t = phy_tree_root_t;
 struct __attribute__((packed)) root_t {
   backref_root_t backref_root;
   lba_root_t lba_root;
-  laddr_le_t onode_root;
+  laddr_le_t onode_root[ONODE_TREE_SHARDS];
   coll_root_le_t collection_root;
   laddr_le_t meta;
 

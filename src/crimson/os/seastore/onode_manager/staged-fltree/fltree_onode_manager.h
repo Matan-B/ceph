@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <array>
+#include <optional>
+
 #include "crimson/os/seastore/onode_manager.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/value.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/tree.h"
@@ -396,18 +399,63 @@ using OnodeTree = Btree<FLTreeOnode>;
 using crimson::common::get_conf;
 
 class FLTreeOnodeManager : public crimson::os::seastore::OnodeManager {
-  OnodeTree tree;
+  // The onode keyspace is partitioned into ONODE_TREE_SHARDS independent
+  // b-trees, all layered on the one shared LBA. An object maps to a shard by a
+  // fixed function of its reverse-hash bitwise key only -- never PG identity or
+  // split_bits -- so PG split/merge stay metadata-only and clones/snaps of an
+  // object always share a shard (see route()).
+  //
+  // std::optional (not a bare OnodeTree) only because Btree deletes its move/copy
+  // ctors and has no default ctor, so it can't be array-initialized directly;
+  // optional lets us construct each in place. The trees live inline here (no heap,
+  // no refcount) -- this is one shard per core, single-threaded, nothing to share.
+  std::array<std::optional<OnodeTree>, ONODE_TREE_SHARDS> trees;
 
   uint32_t default_data_reservation = 0;
+
+  // number of top bits of the 32-bit reverse-hash key that select a shard
+  static constexpr unsigned shard_key_shift() {
+    unsigned bits = 0;
+    for (std::size_t n = ONODE_TREE_SHARDS; n > 1; n >>= 1) {
+      ++bits;
+    }
+    return 32 - bits;
+  }
+
+  static std::size_t route(const hobject_t &hobj) {
+    static_assert((ONODE_TREE_SHARDS & (ONODE_TREE_SHARDS - 1)) == 0,
+                  "ONODE_TREE_SHARDS must be a power of two");
+    if constexpr (ONODE_TREE_SHARDS == 1) {
+      return 0;
+    } else {
+      // Contiguous reverse-hash ranges: shard i owns the fixed key sub-range
+      // [i * 2^32/N, (i+1) * 2^32/N). A collection (a contiguous reverse-hash
+      // interval) therefore lands in ~1-2 shards, keeping listing a near-verbatim
+      // range scan; the mapping ignores snap/gen so it is clone-safe.
+      std::size_t idx = hobj.get_bitwise_key_u32() >> shard_key_shift();
+      assert(idx < ONODE_TREE_SHARDS);
+      return idx;
+    }
+  }
+  static std::size_t route(const ghobject_t &hoid) {
+    return route(hoid.hobj);
+  }
+
 public:
   FLTreeOnodeManager(TransactionManager &tm) :
-    tree(NodeExtentManager::create_seastore(tm)),
     default_data_reservation(
       get_conf<uint64_t>("seastore_default_max_object_size"))
-  {}
+  {
+    for (std::size_t i = 0; i < ONODE_TREE_SHARDS; ++i) {
+      trees[i].emplace(
+        NodeExtentManager::create_seastore(tm, L_ADDR_MIN, 0.0, i));
+    }
+  }
 
   mkfs_ret mkfs(Transaction &t) {
-    return tree.mkfs(t);
+    for (auto &tree: trees) {
+      co_await tree->mkfs(t);
+    }
   }
 
   contains_onode_ret contains_onode(

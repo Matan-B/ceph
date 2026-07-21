@@ -156,7 +156,7 @@ FLTreeOnodeManager::contains_onode_ret FLTreeOnodeManager::contains_onode(
   Transaction &trans,
   const ghobject_t &hoid)
 {
-  return tree.contains(trans, hoid);
+  return trees[route(hoid)]->contains(trans, hoid);
 }
 
 FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode(
@@ -164,10 +164,11 @@ FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode(
   const ghobject_t &hoid)
 {
   LOG_PREFIX(FLTreeOnodeManager::get_onode);
-  return tree.find(
+  auto shard = route(hoid);
+  return trees[shard]->find(
     trans, hoid
-  ).si_then([this, &hoid, &trans, FNAME](auto cursor) -> get_onode_ret {
-    if (cursor == tree.end()) {
+  ).si_then([this, shard, &hoid, &trans, FNAME](auto cursor) -> get_onode_ret {
+    if (cursor == trees[shard]->end()) {
       DEBUGT("no entry for {}", trans, hoid);
       return crimson::ct_error::enoent::make();
     }
@@ -200,6 +201,9 @@ FLTreeOnodeManager::get_or_create_onode(
   const ghobject_t &hoid)
 {
   LOG_PREFIX(FLTreeOnodeManager::get_or_create_onode);
+  // route excludes snap/gen, so clone siblings of hoid live in this same shard
+  // and the get_next/lower_bound sibling stitching below stays intra-tree.
+  auto &tree = *trees[route(hoid)];
   auto [cursor, created] = co_await tree.insert(
     trans, hoid,
     OnodeTree::tree_value_config_t{sizeof(onode_layout_t)});
@@ -281,7 +285,7 @@ FLTreeOnodeManager::erase_onode_ret FLTreeOnodeManager::erase_onode(
   auto &flonode = static_cast<FLTreeOnode&>(*onode);
   assert(flonode.is_alive());
   flonode.mark_delete();
-  return tree.erase(trans, flonode);
+  return trees[route(flonode.get_hobj())]->erase(trans, flonode);
 }
 
 FLTreeOnodeManager::list_onodes_ret FLTreeOnodeManager::list_onodes(
@@ -292,14 +296,31 @@ FLTreeOnodeManager::list_onodes_ret FLTreeOnodeManager::list_onodes(
 {
   LOG_PREFIX(FLTreeOnodeManager::list_onodes);
   DEBUGT("start {}, end {}, limit {}", trans, start, end, limit);
+  // k-way merge across the shard trees: one cursor per shard (each lower_bound'd
+  // at start), repeatedly emitting the globally-smallest live ghobject. With
+  // contiguous reverse-hash routing a per-collection range overlaps only ~1-2
+  // shards, so the other shard cursors immediately land at/after end.
+  std::vector<OnodeTree::Cursor> cursors;
+  cursors.reserve(ONODE_TREE_SHARDS);
+  for (auto &tree : trees) {
+    cursors.emplace_back(co_await tree->lower_bound(trans, start));
+  }
   std::vector<ghobject_t> objects;
-  auto cursor = co_await tree.lower_bound(trans, start);
   for (auto to_list = limit; ; --to_list) {
-    if (cursor.is_end()) {
+    // pick the smallest live shard cursor
+    std::size_t best = cursors.size();
+    for (std::size_t i = 0; i < cursors.size(); ++i) {
+      if (!cursors[i].is_end() &&
+          (best == cursors.size() ||
+           cursors[i].get_ghobj() < cursors[best].get_ghobj())) {
+        best = i;
+      }
+    }
+    if (best == cursors.size()) {
       DEBUGT("reached the onode tree end", trans);
       co_return list_onodes_bare_ret{std::move(objects), ghobject_t::get_max()};
     }
-    auto ghobj = cursor.get_ghobj();
+    auto ghobj = cursors[best].get_ghobj();
     if (ghobj >= end) {
       DEBUGT("reached the end {} >= {}", trans, ghobj, end);
       co_return list_onodes_bare_ret{std::move(objects), end};
@@ -310,9 +331,8 @@ FLTreeOnodeManager::list_onodes_ret FLTreeOnodeManager::list_onodes(
     }
     DEBUGT("found onode for {}", trans, ghobj);
     objects.emplace_back(std::move(ghobj));
-    // we intentionally hold the current cursor during get_next() to
-    // accelerate tree lookup.
-    cursor = co_await tree.get_next(trans, cursor);
+    // we intentionally hold the cursor during get_next() to accelerate lookup.
+    cursors[best] = co_await cursors[best].get_next(trans);
   }
 }
 
