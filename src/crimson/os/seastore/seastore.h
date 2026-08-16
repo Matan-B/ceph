@@ -443,7 +443,7 @@ public:
       const coll_t& cid, int bits);
     tm_ret _split_collection(
       internal_context_t &ctx,
-      const coll_t& cid, int bits);
+      const coll_t& cid, int bits, int rem, const coll_t& dest_cid);
     tm_ret _merge_collection(
       internal_context_t &ctx,
       coll_t cid,
