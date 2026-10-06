@@ -201,17 +201,23 @@ public:
   ) final;
 
 
+  // where the LogNode laddr came from, for the log_node_loads counter
+  using load_t = Cache::log_node_load_t;
+
   omap_list_iertr::future<>
-  find_kvs(Transaction &t, laddr_t dst, const std::optional<std::string> &first,
+  find_kvs(Transaction &t, laddr_t dst, load_t kind,
+    const std::optional<std::string> &first,
     const std::optional<std::string> &last, std::map<std::string, bufferlist> &kvs);
 
   using log_load_extent_iertr = base_iertr;
   template <typename T>
   requires std::is_same_v<LogNode, T>
   log_load_extent_iertr::future<TCachedExtentRef<T>> log_load_extent(
-    Transaction &t, laddr_t laddr, std::string begin, std::string end);
+    Transaction &t, laddr_t laddr, load_t kind, std::string begin,
+    std::string end);
 
-  omap_get_value_ret find_kv(Transaction &t, laddr_t dst, const std::string &key);
+  omap_get_value_ret find_kv(Transaction &t, laddr_t dst, load_t kind,
+    const std::string &key);
 
   /**
    * _log_set_key
@@ -255,8 +261,8 @@ public:
    * @param prev  The next LogNode in the chain (nullptr if @dst is the tail).
    */
 
-  omap_rm_key_ret remove_kv(Transaction &t, laddr_t dst, const std::string &key,
-    LogNodeRef prev);
+  omap_rm_key_ret remove_kv(Transaction &t, laddr_t dst, load_t kind,
+    const std::string &key, LogNodeRef prev);
   
   /**
    * remove_kvs
@@ -276,7 +282,7 @@ public:
    *
    * @return omap_rm_key_ret 
    */
-  omap_rm_key_ret remove_kvs(Transaction &t, laddr_t dst,
+  omap_rm_key_ret remove_kvs(Transaction &t, laddr_t dst, load_t kind,
     std::optional<std::string> first, 
     std::optional<std::string> last,
     LogNodeRef prev);

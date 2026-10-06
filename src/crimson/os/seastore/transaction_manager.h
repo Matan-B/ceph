@@ -100,6 +100,10 @@ public:
     return cache->get_stats(report_detail, seconds);
   }
 
+  void account_log_node_load(Transaction &t, Cache::log_node_load_t kind) {
+    cache->account_log_node_load(t, kind);
+  }
+
   /// Resets transaction
   void reset_transaction_preserve_handle(Transaction &t) {
     return cache->reset_transaction_preserve_handle(t);

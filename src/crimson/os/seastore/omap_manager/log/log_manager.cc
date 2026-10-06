@@ -16,7 +16,7 @@ namespace crimson::os::seastore::log_manager{
 
 base_iertr::future<laddr_t> LogManager::get_dup_addr_from_root(Transaction &t, laddr_t addr) {
   auto ext = co_await log_load_extent<LogNode>(
-    t, addr, BEGIN_KEY, END_KEY);
+    t, addr, load_t::TAIL, BEGIN_KEY, END_KEY);
   assert(ext);
   co_return ext->get_dup_tail_addr();
 }
@@ -65,7 +65,7 @@ LogManager::omap_set_keys(
   assert(log_root.get_type() == omap_type_t::LOG);
 
   auto ext = co_await log_load_extent<LogNode>(
-    t, log_root.addr, BEGIN_KEY, END_KEY);
+    t, log_root.addr, load_t::TAIL, BEGIN_KEY, END_KEY);
   ceph_assert(ext);
   auto resync_log_node = [&](LogNodeRef e)
     -> log_load_extent_iertr::future<CachedExtentRef> {
@@ -80,7 +80,7 @@ LogManager::omap_set_keys(
     if (!node) {
       // Do full reload if not cached
       node = co_await log_load_extent<LogNode>(
-	t, e->get_laddr(), BEGIN_KEY, END_KEY);
+	t, e->get_laddr(), load_t::RELOAD, BEGIN_KEY, END_KEY);
     }
     ceph_assert(node);
     co_return std::move(node);
@@ -144,7 +144,7 @@ LogManager::omap_set_keys(
     LogNodeRef cur = ext;
     if (has_ow_key) {
       if (!cur->can_ow()) {
-	co_await remove_kv(t, log_root.addr, get_ow_key(), nullptr);
+	co_await remove_kv(t, log_root.addr, load_t::TAIL, get_ow_key(), nullptr);
 	CachedExtentRef node = co_await resync_log_node(cur);
 	cur = node->template cast<LogNode>();
       }
@@ -152,7 +152,7 @@ LogManager::omap_set_keys(
 	if (cur->get_max_val_length(p.first.size()) < p.second.length()) {
 	  co_await _log_set_multi_block_key(log_root, t, cur, p.first, p.second);
 	  cur = co_await log_load_extent<LogNode>(
-	    t, log_root.addr, BEGIN_KEY, END_KEY);
+	    t, log_root.addr, load_t::TAIL, BEGIN_KEY, END_KEY);
 	  continue;
 	}
 	if (cur->expect_overflow(p.first, p.second.length(),
@@ -196,7 +196,7 @@ LogManager::omap_set_keys(
     laddr_t dup_tail = co_await get_dup_addr_from_root(t, ext->get_laddr());
     for (auto &p : kvs) {
       if (!is_log_key(p.first)) {
-	co_await remove_kv(t, log_root.addr, p.first, nullptr);
+	co_await remove_kv(t, log_root.addr, load_t::TAIL, p.first, nullptr);
 	// reload latest log list e because e was updated if the key is in e
 	CachedExtentRef node = co_await resync_log_node(e);
 	e = node->template cast<LogNode>();
@@ -212,11 +212,11 @@ LogManager::omap_set_keys(
 	co_await _log_set_multi_block_key(log_root, t, cur, p.first, p.second);
 	if (!is_dup_log_key(p.first)) {
 	  e = co_await log_load_extent<LogNode>(
-	    t, log_root.addr, BEGIN_KEY, END_KEY);
+	    t, log_root.addr, load_t::TAIL, BEGIN_KEY, END_KEY);
 	} else {
 	  dup_e = co_await log_load_extent<LogNode>(
 	    t, co_await get_dup_addr_from_root(t, log_root.addr),
-	    BEGIN_KEY, END_KEY);
+	    load_t::DUP_TAIL, BEGIN_KEY, END_KEY);
 	}
 	continue;
       }
@@ -257,26 +257,26 @@ LogManager::omap_set_keys(
     }
     if (!is_log_key(p.first)) {
       // remove duplicate keys first
-      co_await remove_kv(t, log_root.addr, p.first, nullptr);
+      co_await remove_kv(t, log_root.addr, load_t::TAIL, p.first, nullptr);
     }
     laddr_t last_addr = log_root.addr;
     co_await set_log_node_entry(p.first, p.second);
     if (last_addr != log_root.addr) {
       ext = co_await log_load_extent<LogNode>(
-	t, log_root.addr, BEGIN_KEY, END_KEY);
+	t, log_root.addr, load_t::TAIL, BEGIN_KEY, END_KEY);
       last_addr = log_root.addr;
     }
   }
 
   if (!dup_kvs.empty()) {
     laddr_t last_addr = ext->get_dup_tail_addr();
-    ext = co_await log_load_extent<LogNode>(t, last_addr, BEGIN_KEY, END_KEY);
+    ext = co_await log_load_extent<LogNode>(t, last_addr, load_t::DUP_TAIL, BEGIN_KEY, END_KEY);
     for (auto &p: dup_kvs) {
       co_await set_log_node_entry(p.first, p.second);
       if (&p != &*dup_kvs.rbegin()) {
 	laddr_t current_addr = co_await get_dup_addr_from_root(t, log_root.addr);
 	if (last_addr != current_addr) {
-	  ext = co_await log_load_extent<LogNode>(t, current_addr, BEGIN_KEY, END_KEY);
+	  ext = co_await log_load_extent<LogNode>(t, current_addr, load_t::DUP_TAIL, BEGIN_KEY, END_KEY);
 	  last_addr = current_addr;
 	}
       }
@@ -339,7 +339,7 @@ LogManager::_log_set_multi_block_key(omap_root_t &log_root,
     cur_extent->set_dup_tail_addr(tail->get_dup_tail_addr());
   } else {
     auto ext = co_await log_load_extent<LogNode>(
-      t, log_root.addr, BEGIN_KEY, END_KEY);
+      t, log_root.addr, load_t::TAIL, BEGIN_KEY, END_KEY);
     auto mut = tm.get_mutable_extent(t, ext)->cast<LogNode>();
     mut->set_dup_tail_addr(cur_extent->get_laddr());
   }
@@ -380,7 +380,7 @@ LogManager::_log_set_key(omap_root_t &log_root,
     // Update the dup tail pointer in the current log tail
     //   to point to the newly created dup extent.
     auto ext = co_await log_load_extent<LogNode>(
-      t, log_root.addr, BEGIN_KEY, END_KEY);
+      t, log_root.addr, load_t::TAIL, BEGIN_KEY, END_KEY);
     auto mut = tm.get_mutable_extent(t, ext)->cast<LogNode>();
     mut->set_dup_tail_addr(extent->get_laddr());
   }
@@ -412,11 +412,13 @@ LogManager::log_load_extent_iertr::future<TCachedExtentRef<T>>
 LogManager::log_load_extent(
   Transaction &t,
   laddr_t laddr,
+  load_t kind,
   std::string begin,
   std::string end)
 {
   LOG_PREFIX(LogManager::log_load_extent);
   DEBUGT("laddr={}", t, laddr);
+  tm.account_log_node_load(t, kind);
   assert(end <= END_KEY);
   auto size = LOG_NODE_BLOCK_SIZE;
   auto maybe_indirect_extent = co_await tm.read_extent<T>(t, laddr, size,
@@ -442,10 +444,10 @@ LogManager::omap_get_value(
   DEBUGT("key={}", t, key);
   assert(log_root.get_type() == omap_type_t::LOG);
   if (!is_dup_log_key(key)) {
-    co_return co_await find_kv(t, log_root.addr, key);
+    co_return co_await find_kv(t, log_root.addr, load_t::TAIL, key);
   }
   co_return co_await find_kv(t, 
-    co_await get_dup_addr_from_root(t, log_root.addr), key);
+    co_await get_dup_addr_from_root(t, log_root.addr), load_t::DUP_TAIL, key);
 }
 
 LogManager::omap_list_ret
@@ -460,10 +462,10 @@ LogManager::omap_list(
   DEBUGT("first={}, last={}", t, first, last);
   assert(log_root.get_type() == omap_type_t::LOG);
   std::map<std::string, bufferlist> kvs;
-  co_await find_kvs(t, log_root.addr, first, last, kvs);
+  co_await find_kvs(t, log_root.addr, load_t::TAIL, first, last, kvs);
   // for dup list
   co_await find_kvs(t,
-    co_await get_dup_addr_from_root(t, log_root.addr), first, last, kvs);
+    co_await get_dup_addr_from_root(t, log_root.addr), load_t::DUP_TAIL, first, last, kvs);
   auto ret = omap_list_bare_ret(false, {});
   auto &[complete, result] = ret;
   result.insert(kvs.begin(), kvs.end());
@@ -471,7 +473,7 @@ LogManager::omap_list(
 }
 
 LogManager::omap_list_iertr::future<>
-LogManager::find_kvs(Transaction &t, laddr_t dst,
+LogManager::find_kvs(Transaction &t, laddr_t dst, load_t kind,
   const std::optional<std::string> &first,
   const std::optional<std::string> &last,
   std::map<std::string, bufferlist> &kvs)
@@ -482,7 +484,7 @@ LogManager::find_kvs(Transaction &t, laddr_t dst,
     co_return;
   }
   auto extent = co_await log_load_extent<LogNode>(
-    t, dst, BEGIN_KEY, END_KEY);
+    t, dst, kind, BEGIN_KEY, END_KEY);
   if (extent == nullptr) {
     co_return;
   }
@@ -491,7 +493,7 @@ LogManager::find_kvs(Transaction &t, laddr_t dst,
     co_return;
   }
   extent->list(first, last, kvs);
-  co_await find_kvs(t, extent->get_prev_addr(), first, last, kvs);
+  co_await find_kvs(t, extent->get_prev_addr(), load_t::PREV, first, last, kvs);
   co_return;
 }
 
@@ -508,23 +510,23 @@ LogManager::find_multi_block_kvs(Transaction &t, LogNodeRef extent,
     co_return;
   }
   auto prev_extent = co_await log_load_extent<LogNode>(
-    t, extent->get_prev_addr(), BEGIN_KEY, END_KEY);
+    t, extent->get_prev_addr(), load_t::PREV, BEGIN_KEY, END_KEY);
   if (prev_extent->has_multi_block_kv()) {
     co_await find_multi_block_kvs(t, prev_extent, first, last, kvs);
   } else {
-    co_await find_kvs(t, prev_extent->get_laddr(), first, last, kvs);
+    co_await find_kvs(t, prev_extent->get_laddr(), load_t::RELOAD, first, last, kvs);
   }
   co_return;
 }
 
 LogManager::omap_get_value_ret
-LogManager::find_kv(Transaction &t, laddr_t dst, const std::string &key)
+LogManager::find_kv(Transaction &t, laddr_t dst, load_t kind, const std::string &key)
 {
   LOG_PREFIX(LogManager::find_kv);
   DEBUGT("key={}, dst={}", t, key, dst);
 
   auto extent = co_await log_load_extent<LogNode>(
-    t, dst, BEGIN_KEY, END_KEY);
+    t, dst, kind, BEGIN_KEY, END_KEY);
   if (extent == nullptr) {
     co_return std::nullopt;
   }
@@ -539,7 +541,7 @@ LogManager::find_kv(Transaction &t, laddr_t dst, const std::string &key)
     if(extent->get_prev_addr() == L_ADDR_NULL) {
       co_return std::nullopt;
     }
-    auto ret = co_await find_kv(t, extent->get_prev_addr(), key);
+    auto ret = co_await find_kv(t, extent->get_prev_addr(), load_t::PREV, key);
     co_return ret;
   }
   co_return std::move(e);
@@ -559,7 +561,7 @@ LogManager::find_multi_block_kv(Transaction &t, const std::string &key,
   } 
   assert(extent->get_prev_addr() != L_ADDR_NULL);
   auto prev_extent = co_await log_load_extent<LogNode>(
-    t, extent->get_prev_addr(), BEGIN_KEY, END_KEY);
+    t, extent->get_prev_addr(), load_t::PREV, BEGIN_KEY, END_KEY);
   if (prev_extent->has_multi_block_kv(key)) {
     co_await find_multi_block_kv(t, key, prev_extent, buf);
   } else {
@@ -599,7 +601,7 @@ LogManager::remove_node(Transaction &t, LogNodeRef mut, LogNodeRef prev)
 }
 
 LogManager::omap_rm_key_ret
-LogManager::remove_kv(Transaction &t, laddr_t dst, const std::string &key, LogNodeRef prev)
+LogManager::remove_kv(Transaction &t, laddr_t dst, load_t kind, const std::string &key, LogNodeRef prev)
 {
   LOG_PREFIX(LogManager::remove_kv);
   DEBUGT("key={}, dst={}", t, key, dst);
@@ -608,7 +610,7 @@ LogManager::remove_kv(Transaction &t, laddr_t dst, const std::string &key, LogNo
     co_return;
   }
   auto extent = co_await log_load_extent<LogNode>(
-    t, dst, BEGIN_KEY, END_KEY);
+    t, dst, kind, BEGIN_KEY, END_KEY);
   if (extent == nullptr) {
     co_return;
   }
@@ -621,10 +623,10 @@ LogManager::remove_kv(Transaction &t, laddr_t dst, const std::string &key, LogNo
       co_await remove_node(t, mut, prev);
       if (prev != nullptr && mut->get_prev_addr() != L_ADDR_NULL) {
 	mut = co_await log_load_extent<LogNode>(
-	  t, prev->get_laddr(), BEGIN_KEY, END_KEY);
+	  t, prev->get_laddr(), load_t::RELOAD, BEGIN_KEY, END_KEY);
       }
     }
-    co_await remove_kv(t, mut->get_prev_addr(), key, mut);
+    co_await remove_kv(t, mut->get_prev_addr(), load_t::PREV, key, mut);
     co_return;
   }
 
@@ -633,7 +635,7 @@ LogManager::remove_kv(Transaction &t, laddr_t dst, const std::string &key, LogNo
     if(extent->get_prev_addr() == L_ADDR_NULL) {
       co_return;
     }
-    co_await remove_kv(t, extent->get_prev_addr(), key, extent);
+    co_await remove_kv(t, extent->get_prev_addr(), load_t::PREV, key, extent);
     co_return;
   }
 
@@ -646,7 +648,7 @@ LogManager::remove_kv(Transaction &t, laddr_t dst, const std::string &key, LogNo
 }
 
 LogManager::omap_rm_key_ret
-LogManager::remove_kvs(Transaction &t, laddr_t dst, 
+LogManager::remove_kvs(Transaction &t, laddr_t dst, load_t kind,
   std::optional<std::string> first, 
   std::optional<std::string> last,
   LogNodeRef prev)
@@ -659,7 +661,7 @@ LogManager::remove_kvs(Transaction &t, laddr_t dst,
   }
 
   auto extent = co_await log_load_extent<LogNode>(
-    t, dst, BEGIN_KEY, END_KEY);
+    t, dst, kind, BEGIN_KEY, END_KEY);
   if (extent == nullptr) {
     co_return;
   }
@@ -673,7 +675,7 @@ LogManager::remove_kvs(Transaction &t, laddr_t dst,
   if (is_log_key(*first)) {
     // skip to search due to out of range
     if (l != std::nullopt && extent->log_has_larger_than(*last)) {
-      co_await remove_kvs(t, prev_addr, first, last, extent);
+      co_await remove_kvs(t, prev_addr, load_t::PREV, first, last, extent);
       co_return;
     }
     // If time-seris log, we don't need traversal anymore
@@ -696,11 +698,11 @@ LogManager::remove_kvs(Transaction &t, laddr_t dst,
       co_await remove_node(t, mut, prev);
       if (prev != nullptr) {
 	p = co_await log_load_extent<LogNode>(
-	  t, prev->get_laddr(), BEGIN_KEY, END_KEY);
+	  t, prev->get_laddr(), load_t::RELOAD, BEGIN_KEY, END_KEY);
       }
     }
   }
-  co_await remove_kvs(t, prev_addr, first, last, p);
+  co_await remove_kvs(t, prev_addr, load_t::PREV, first, last, p);
   co_return;
 }
 
@@ -714,10 +716,10 @@ LogManager::omap_rm_key(
   DEBUGT("key={}", t, key);
   assert(log_root.get_type() == omap_type_t::LOG);
   if (!is_dup_log_key(key)) {
-    co_await remove_kv(t, log_root.addr, key, nullptr);
+    co_await remove_kv(t, log_root.addr, load_t::TAIL, key, nullptr);
   } else {
     co_await remove_kv(t, 
-      co_await get_dup_addr_from_root(t, log_root.addr), key, nullptr);
+      co_await get_dup_addr_from_root(t, log_root.addr), load_t::DUP_TAIL, key, nullptr);
   }
   co_return;
 }
@@ -788,7 +790,7 @@ LogManager::omap_rm_keys(
   // pg_log_entry_t entries ranging from 0011.0001 to 0011.0010.
   // In this case, calling omap_rm_key individually for each entry is inefficient,
   // because each call triggers a traversal of the entire list.
-  auto remove_key_set = [&](auto& key_set, laddr_t addr) -> omap_rm_key_ret {
+  auto remove_key_set = [&](auto& key_set, laddr_t addr, load_t kind) -> omap_rm_key_ret {
     if (key_set.empty())
       co_return;
 
@@ -796,19 +798,19 @@ LogManager::omap_rm_keys(
     if (continuous) {
       // fast path
       co_await remove_kvs(
-	t, addr,
+	t, addr, kind,
 	*key_set.begin(),
 	*key_set.rbegin(),
 	nullptr);
     } else {
       for (auto& p : key_set) {
-	co_await remove_kv(t, log_root.addr, p, nullptr);
+	co_await remove_kv(t, log_root.addr, load_t::TAIL, p, nullptr);
       }
     }
   };
-  co_await remove_key_set(keys, log_root.addr);
+  co_await remove_key_set(keys, log_root.addr, load_t::TAIL);
   co_await remove_key_set(dup_keys,
-    co_await get_dup_addr_from_root(t, log_root.addr));
+    co_await get_dup_addr_from_root(t, log_root.addr), load_t::DUP_TAIL);
   co_return;
 }
 
@@ -822,10 +824,10 @@ LogManager::omap_rm_key_range(
   LOG_PREFIX(LogManager::omap_rm_key_range);
   DEBUGT("first={}, last={}", t, first, last);
   assert(log_root.get_type() == omap_type_t::LOG);
-  co_await remove_kvs(t, log_root.addr, first, last, nullptr);
+  co_await remove_kvs(t, log_root.addr, load_t::TAIL, first, last, nullptr);
   // for dup list
   co_await remove_kvs(t, 
-    co_await get_dup_addr_from_root(t, log_root.addr),
+    co_await get_dup_addr_from_root(t, log_root.addr), load_t::DUP_TAIL,
     first, last, nullptr);
   co_return;
 }
@@ -836,11 +838,11 @@ LogManager::omap_clear(omap_root_t &root, Transaction &t)
   LOG_PREFIX(LogManager::omap_clear);
   DEBUGT("enter", t);
   assert(root.get_type() == omap_type_t::LOG);
-  co_await remove_kvs(t, root.addr,
+  co_await remove_kvs(t, root.addr, load_t::TAIL,
     std::optional<std::string>(),
     std::optional<std::string>(std::nullopt), nullptr);
   co_await remove_kvs(t, 
-    co_await get_dup_addr_from_root(t, root.addr),
+    co_await get_dup_addr_from_root(t, root.addr), load_t::DUP_TAIL,
     std::optional<std::string>(),
     std::optional<std::string>(std::nullopt), nullptr);
   co_await tm.remove(t, co_await get_dup_addr_from_root(t, root.addr)
@@ -874,10 +876,10 @@ LogManager::omap_iterate(
 
   std::string s = start_from.seek_position;
   std::map<std::string, bufferlist> kvs;
-  co_await find_kvs(t, log_root.addr, std::optional<std::string>(s),
+  co_await find_kvs(t, log_root.addr, load_t::TAIL, std::optional<std::string>(s),
     std::optional<std::string>(std::nullopt), kvs);
   co_await find_kvs(t,
-    co_await get_dup_addr_from_root(t, log_root.addr),
+    co_await get_dup_addr_from_root(t, log_root.addr), load_t::DUP_TAIL,
     std::optional<std::string>(s),
     std::optional<std::string>(std::nullopt), kvs);
   if (start_from.seek_type == ObjectStore::omap_iter_seek_t::UPPER_BOUND) {

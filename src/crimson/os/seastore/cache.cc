@@ -214,6 +214,35 @@ void Cache::register_metrics(store_index_t store_index)
   }
 
   /*
+   * log_node_loads: LogNodes loaded by laddr, by where the laddr came from
+   */
+  const std::pair<log_node_load_t, const char*> log_node_load_names[] = {
+    {log_node_load_t::TAIL, "TAIL"},
+    {log_node_load_t::DUP_TAIL, "DUP_TAIL"},
+    {log_node_load_t::PREV, "PREV"},
+    {log_node_load_t::RELOAD, "RELOAD"},
+  };
+  for (auto& [src, src_label] : labels_by_src) {
+    auto& loads = get_by_src(stats.log_node_loads_by_src, src);
+    for (auto& [kind, kind_name] : log_node_load_names) {
+      std::vector<sm::label_instance> merged_labels = src_label;
+      merged_labels.push_back(sm::label_instance("kind", kind_name));
+      metrics.add_group(
+        "cache",
+        {
+          sm::make_counter(
+            "log_node_loads",
+            loads[static_cast<std::size_t>(kind)],
+            sm::description("total number of LogNodes loaded by laddr, "
+                            "including retried attempts"),
+            merged_labels
+          ),
+        }
+      );
+    }
+  }
+
+  /*
    * cache_query: cache_access and cache_hit
    */
   metrics.add_group(

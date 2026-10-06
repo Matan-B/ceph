@@ -775,6 +775,19 @@ public:
     ++get_by_ext(get_by_src(stats.laddr_lookups_by_src_ext, t.get_src()), ext);
   }
 
+  // Where the laddr of a loaded LogNode came from.
+  enum class log_node_load_t : uint8_t {
+    TAIL,     // log_root.addr
+    DUP_TAIL, // a node's dup_tail_addr
+    PREV,     // a node's prev_addr
+    RELOAD,   // a node t already loaded
+    MAX
+  };
+  void account_log_node_load(Transaction &t, log_node_load_t kind) {
+    ++get_by_src(stats.log_node_loads_by_src, t.get_src())[
+      static_cast<std::size_t>(kind)];
+  }
+
 private:
   /**
    * maybe_page_aligned_bptr
@@ -1927,6 +1940,9 @@ private:
       access_by_src_ext;
     counter_by_src_t<counter_by_extent_t<uint64_t> >
       laddr_lookups_by_src_ext;
+    counter_by_src_t<std::array<uint64_t,
+      static_cast<std::size_t>(log_node_load_t::MAX)> >
+      log_node_loads_by_src;
 
     uint64_t onode_tree_depth = 0;
     int64_t onode_tree_extents_num = 0;
