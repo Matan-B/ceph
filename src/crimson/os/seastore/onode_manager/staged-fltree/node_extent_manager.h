@@ -36,12 +36,15 @@ class NodeExtent : public LogicalChildNode {
     return get_bptr().c_str();
   }
   NodeExtentMutable get_mutable() {
-    assert(is_mutable());
+    // in-place: value payload overwrites only, see mutate_mode_t
+    assert(is_mutable() || is_inplace_pending());
     return do_get_mutable();
   }
 
   virtual DeltaRecorder* get_recorder() const = 0;
-  virtual NodeExtentRef mutate(context_t, DeltaRecorderURef&&) = 0;
+  /// mode: see mutate_mode_t. With INPLACE the returned extent may be this
+  /// one, mutated in place (is_inplace_pending()).
+  virtual NodeExtentRef mutate(context_t, DeltaRecorderURef&&, mutate_mode_t) = 0;
 
  protected:
   template <typename... T>

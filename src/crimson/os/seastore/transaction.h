@@ -146,6 +146,11 @@ public:
       assert(ext == ref);
     }
 #endif
+    if (ref->is_inplace_pending()) {
+      // mutated in place by this transaction and now retired as a whole:
+      // the pending delta is dropped, the extent is invalidated at commit
+      remove_inplace_mutated_extent(*ref);
+    }
     if (ref->is_exist_clean() ||
 	ref->is_exist_mutation_pending()) {
       existing_block_stats.dec(ref);
@@ -412,6 +417,27 @@ public:
     return conflicted;
   }
 
+  /// Stable extents this (writer) transaction mutated in place, see
+  /// CachedExtent::inplace_writer and Cache::duplicate_for_write().
+  void add_inplace_mutated_extent(CachedExtentRef ref) {
+    assert(ref->inplace_writer == this);
+    inplace_mutated_list.emplace_back(std::move(ref));
+  }
+  /// The extent stops being mutated in place: it is being copied after all
+  /// (a layout change) or retired.
+  void remove_inplace_mutated_extent(CachedExtent &ref) {
+    assert(ref.inplace_writer == this);
+    ref.inplace_writer = nullptr;
+    auto it = std::find_if(
+      inplace_mutated_list.begin(), inplace_mutated_list.end(),
+      [&ref](auto &e) { return e.get() == &ref; });
+    assert(it != inplace_mutated_list.end());
+    inplace_mutated_list.erase(it);
+  }
+  const auto& get_inplace_mutated_list() const {
+    return inplace_mutated_list;
+  }
+
   /**
    * Reader validation
    *
@@ -656,6 +682,9 @@ private:
    * If set, *this may not be used to perform writes.
    */
   const bool weak;
+
+  /// see add_inplace_mutated_extent()
+  std::vector<CachedExtentRef> inplace_mutated_list;
 
   /// see reader_is_stale()
   std::vector<CachedExtentRef> reader_extents;

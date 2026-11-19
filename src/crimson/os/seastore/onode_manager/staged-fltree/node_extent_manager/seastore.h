@@ -77,7 +77,7 @@ class SeastoreNodeExtent final: public NodeExtent {
   }
 
  protected:
-  NodeExtentRef mutate(context_t, DeltaRecorderURef&&) override;
+  NodeExtentRef mutate(context_t, DeltaRecorderURef&&, mutate_mode_t) override;
 
   void do_on_state_commit() override {
     auto &prior = static_cast<SeastoreNodeExtent&>(*get_prior_instance());

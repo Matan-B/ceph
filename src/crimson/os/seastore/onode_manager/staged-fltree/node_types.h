@@ -83,12 +83,17 @@ enum class node_delta_op_t : uint8_t {
  * load()----+
  *           |
  * alloc()   v
- *  |        +--> [READ_ONLY] ---------+
- *  |        |         |               |
- *  |        |   prepare_mutate()      |
- *  |        |         |               |
- *  |        v         v               v
- *  |        +--> [MUTATION_PENDING]---+
+ *  |        +--> [READ_ONLY] -----------------------+
+ *  |        |         |               |               |
+ *  |        |         |    prepare_mutate_value_payload()
+ *  |        |         |               |               |
+ *  |        |         |               v               |
+ *  |        |         |       [INPLACE_PENDING]       |
+ *  |        |         |               |               |
+ *  |        |   prepare_mutate()  prepare_mutate()    |
+ *  |        |         |               |               |
+ *  |        v         v               v               v
+ *  |        +--> [MUTATION_PENDING]-------------------+
  *  |        |                         |
  *  |        |                     rebuild()
  *  |        |                         |
@@ -102,6 +107,9 @@ enum class node_delta_op_t : uint8_t {
 enum class nextent_state_t : uint8_t {
   READ_ONLY = 0,       // requires mutate for recording
                        //   CLEAN/DIRTY
+  INPLACE_PENDING,     // can overwrite value payloads only, needs recording,
+                       // same memory as the stable extent
+                       //   CLEAN/DIRTY and is_inplace_pending()
   MUTATION_PENDING,    // can mutate, needs recording
                        //   MUTATION_PENDING
   FRESH,               // can mutate, no recording

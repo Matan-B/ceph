@@ -1128,12 +1128,54 @@ ceph::bufferptr Cache::maybe_page_aligned_bptr(
   return nbp;
 }
 
+bool Cache::can_mutate_inplace(
+  const Transaction &t,
+  const CachedExtent &i) const
+{
+  // TODO: LBA leaf value updates (refcount, paddr, checksum) and shifting
+  //       LBA leaf changes with reader cursor revalidation.
+  return t.get_src() == Transaction::src_t::MUTATE &&
+    // fixed-size onode value overwrites, see
+    // NodeExtentAccessorT::prepare_mutate_value_payload()
+    i.get_type() == extent_types_t::ONODE_BLOCK_STAGED &&
+    i.is_stable_ready() &&
+    i.is_fully_loaded() &&
+    i.get_paddr().is_absolute();
+}
+
 CachedExtentRef Cache::duplicate_for_write(
   Transaction &t,
-  CachedExtentRef i) {
+  CachedExtentRef i,
+  mutate_mode_t mode) {
   LOG_PREFIX(Cache::duplicate_for_write);
   ceph_assert(i->is_valid());
   assert(i->is_fully_loaded());
+
+  if (i->is_inplace_pending()) {
+    // Single writer: only t can have mutated it in place.
+    ceph_assert(i->inplace_writer == &t);
+    if (mode == mutate_mode_t::INPLACE) {
+      return i;
+    }
+    // A layout change on an extent t already mutated in place: from now on
+    // copy-on-write. The copy below starts from i's current bytes, so it
+    // carries the in-place changes, and the extent type moves the deltas
+    // recorded so far to the copy (e.g. SeastoreNodeExtent::mutate()).
+    // i itself stays the stable prior, with uncommitted bytes that readers
+    // already see, and gets replaced at commit.
+    DEBUGT("in-place extent becomes copy-on-write -- {}", t, *i);
+    t.remove_inplace_mutated_extent(*i);
+  } else if (mode == mutate_mode_t::INPLACE &&
+             can_mutate_inplace(t, *i)) {
+    DEBUGT("mutate in place -- {}", t, *i);
+    i->inplace_writer = &t;
+    if (i->is_stable_clean()) {
+      // must not be evicted while it carries uncommitted changes
+      pinboard->remove(*i);
+    }
+    t.add_inplace_mutated_extent(i);
+    return i;
+  }
 
 #ifndef NDEBUG
   if (i->is_logical()) {
@@ -1328,6 +1370,70 @@ record_t Cache::prepare_record(
                i->get_type()) += delta_length;
     delta_stat.increment(delta_length);
     i->trans_view_hook.unlink();
+  }
+
+  // Extents mutated in place (see CachedExtent::inplace_writer): there is no
+  // copy to replace the prior with, the stable extent itself already holds
+  // the new bytes. Journal the delta against its current version and make it
+  // dirty, it stays the same object in the cache index.
+  for (auto &i: t.get_inplace_mutated_list()) {
+    assert(i->is_valid());
+    assert(i->is_stable());
+    assert(i->inplace_writer == &t);
+    assert(!is_root_type(i->get_type()));
+    get_by_ext(efforts.mutate_by_ext,
+               i->get_type()).increment(i->get_length());
+    ++efforts.num_inplace_mutated_extents;
+
+    auto delta_bl = i->get_delta();
+    auto delta_length = delta_bl.length();
+    assert(delta_length);
+    i->set_modify_time(commit_time);
+    DEBUGT("in-place mutated extent with {}B delta -- {}",
+           t, delta_length, *i);
+
+    auto sseq = NULL_SEG_SEQ;
+    auto stype = segment_type_t::NULL_SEG;
+    // FIXME: This is specific to the segmented implementation
+    if (i->get_paddr().is_absolute_segmented()) {
+      auto sid = i->get_paddr().as_seg_paddr().get_segment_id();
+      auto sinfo = get_segment_info(sid);
+      if (sinfo) {
+        sseq = sinfo->seq;
+        stype = sinfo->type;
+      }
+    }
+
+    auto final_crc = i->calc_crc32c();
+    record.push_back(
+      delta_info_t{
+        i->get_type(),
+        i->get_paddr(),
+        (i->is_logical()
+         ? i->cast<LogicalCachedExtent>()->get_laddr()
+         : L_ADDR_NULL),
+        i->last_committed_crc,
+        final_crc,
+        i->get_length(),
+        i->get_version(), // the delta applies on top of the current version
+        sseq,
+        stype,
+        std::move(delta_bl)
+      });
+    i->last_committed_crc = final_crc;
+    ++i->version;
+    if (i->is_stable_clean()) {
+      // already out of the pinboard, see duplicate_for_write()
+      i->state = CachedExtent::extent_state_t::DIRTY;
+      add_to_dirty(i, &trans_src);
+    }
+    // TODO: unlike a replaced copy, the extent is not put in io_wait until
+    //       the journal write completes: new readers may observe it before
+    //       it is durable, as in-flight readers already do.
+
+    get_by_ext(efforts.delta_bytes_by_ext,
+               i->get_type()) += delta_length;
+    delta_stat.increment(delta_length);
   }
 
   t.for_each_finalized_fresh_block([&t](auto &e) {
@@ -1954,6 +2060,19 @@ void Cache::complete_commit(
   });
 
   // Add new copy of mutated blocks, set_io_wait to block until written
+  for (auto &i: t.get_inplace_mutated_list()) {
+    assert(i->is_valid());
+    assert(i->is_stable_dirty());
+    assert(i->inplace_writer == &t);
+    if (i->version == 1) {
+      // was clean before this transaction
+      i->dirty_from = start_seq;
+    }
+    i->on_delta_write(final_block_start);
+    i->inplace_writer = nullptr;
+    DEBUGT("in-place extent committed -- {}", t, *i);
+  }
+
   for (auto &i: t.mutated_block_list) {
     if (!i->is_valid()) {
       continue;

@@ -229,6 +229,24 @@ private:
 using ExtentCommitterRef = boost::intrusive_ptr<ExtentCommitter>;
 
 class ExtentIndex;
+
+/**
+ * mutate_mode_t
+ *
+ * How a transaction wants to mutate a stable extent, see
+ * Cache::duplicate_for_write().
+ * - COPY:    copy-on-write. Mutations go to a private copy that replaces the
+ *            stable extent at commit.
+ * - INPLACE: the caller only overwrites bytes in place (nothing shifts). With
+ *            a single writer per shard (TransactionManager::writer_lock) the
+ *            stable extent may then be mutated directly, see
+ *            CachedExtent::inplace_writer. Cache may still decide to copy.
+ */
+enum class mutate_mode_t : uint8_t {
+  COPY,
+  INPLACE,
+};
+
 class CachedExtent
   : public boost::intrusive_ref_counter<
       CachedExtent, boost::thread_unsafe_counter>,
@@ -541,6 +559,12 @@ public:
   bool is_stable() const {
     return state == extent_state_t::CLEAN
         || state == extent_state_t::DIRTY;
+  }
+
+  /// Returns true iff the single writer mutated this extent in place and has
+  /// not committed yet, see inplace_writer.
+  bool is_inplace_pending() const {
+    return inplace_writer != nullptr;
   }
 
   /// Returns true iff extent is stable and not io-pending
@@ -921,6 +945,24 @@ private:
   }
 
   CachedExtent* maybe_get_transactional_view(Transaction &t);
+
+  /**
+   * inplace_writer
+   *
+   * Set while the shard's single writer has mutated this stable extent in
+   * place (mutate_mode_t::INPLACE) and not committed yet. The extent keeps
+   * its stable state (CLEAN/DIRTY) and stays the same object in the cache
+   * index, so every transaction, including the writer, keeps finding and
+   * reading it as a stable extent. Only the writer's bookkeeping
+   * (Transaction::inplace_mutated_list) knows it carries a pending delta.
+   *
+   * Invariants while set:
+   * - only fixed-size overwrites were applied: readers holding positions or
+   *   pointers into the extent stay correct;
+   * - it is not linked in the pinboard, so it can not be evicted;
+   * - nothing writes it out: background work is serialized with the writer.
+   */
+  Transaction *inplace_writer = nullptr;
 
   placement_hint_t user_hint = PLACEMENT_HINT_NULL;
 

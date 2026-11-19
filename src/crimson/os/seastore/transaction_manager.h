@@ -583,8 +583,11 @@ public:
   }
 
   /// Obtain mutable copy of extent
-  LogicalChildNodeRef get_mutable_extent(Transaction &t, LogicalChildNodeRef ref) {
-    return cache->duplicate_for_write(t, ref)->cast<LogicalChildNode>();
+  LogicalChildNodeRef get_mutable_extent(
+      Transaction &t,
+      LogicalChildNodeRef ref,
+      mutate_mode_t mode = mutate_mode_t::COPY) {
+    return cache->duplicate_for_write(t, ref, mode)->cast<LogicalChildNode>();
   }
 
   using ref_iertr = LBAManager::ref_iertr;

@@ -61,7 +61,7 @@ class DummyNodeExtent final: public NodeExtent {
   }
 
  protected:
-  NodeExtentRef mutate(context_t, DeltaRecorderURef&&) override {
+  NodeExtentRef mutate(context_t, DeltaRecorderURef&&, mutate_mode_t) override {
     ceph_abort_msg("impossible path"); }
   DeltaRecorder* get_recorder() const override {
     return nullptr; }

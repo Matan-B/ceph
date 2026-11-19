@@ -307,9 +307,13 @@ class NodeExtentAccessorT {
       recorder = static_cast<recorder_t*>(p_recorder);
     } else if (extent->is_stable()) {
       assert(extent->is_stable_ready());
+      // Also when extent->is_inplace_pending(): it is still a stable extent
+      // to everyone. Readers must not see it otherwise, and the writer gets
+      // back its recorder from mutate() once it mutates again.
       state = nextent_state_t::READ_ONLY;
       // mut is empty
-      assert(extent->get_recorder() == nullptr ||
+      assert(extent->is_inplace_pending() ||
+             extent->get_recorder() == nullptr ||
              extent->get_recorder()->is_empty());
       recorder = nullptr;
     } else {
@@ -355,17 +359,19 @@ class NodeExtentAccessorT {
   // for the safety of mixed read and mutate, call before read.
   void prepare_mutate(context_t c) {
     assert(!is_retired());
-    if (state == nextent_state_t::READ_ONLY) {
+    if (state == nextent_state_t::READ_ONLY ||
+        // a layout change after in-place value overwrites: copy now, the
+        // copy carries the bytes and deltas so far (SeastoreNodeExtent::mutate)
+        state == nextent_state_t::INPLACE_PENDING) {
       assert(extent->is_stable());
       assert(extent->is_stable_ready());
       auto ref_recorder = recorder_t::create_for_encode(c.vb);
-      recorder = static_cast<recorder_t*>(ref_recorder.get());
-      extent = extent->mutate(c, std::move(ref_recorder));
+      extent = extent->mutate(c, std::move(ref_recorder), mutate_mode_t::COPY);
       state = nextent_state_t::MUTATION_PENDING;
       assert(extent->is_mutation_pending());
       node_stage = node_stage_t(reinterpret_cast<const FieldType*>(extent->get_read()),
                                 get_length());
-      assert(recorder == static_cast<recorder_t*>(extent->get_recorder()));
+      recorder = static_cast<recorder_t*>(extent->get_recorder());
       mut.emplace(extent->get_mutable());
     }
     assert(extent->is_mutable());
@@ -499,9 +505,32 @@ class NodeExtentAccessorT {
 
   std::pair<NodeExtentMutable&, ValueDeltaRecorder*>
   prepare_mutate_value_payload(context_t c) {
-    prepare_mutate(c);
+    assert(!is_retired());
+    if (state == nextent_state_t::READ_ONLY) {
+      // A value payload overwrite never shifts anything in the node, so ask
+      // for an in-place mutation (no copy-on-write, see mutate_mode_t).
+      assert(extent->is_stable());
+      assert(extent->is_stable_ready());
+      auto ref_recorder = recorder_t::create_for_encode(c.vb);
+      extent = extent->mutate(c, std::move(ref_recorder), mutate_mode_t::INPLACE);
+      if (extent->is_inplace_pending()) {
+        // same memory, node_stage stays valid
+        state = nextent_state_t::INPLACE_PENDING;
+      } else {
+        // Cache decided to copy
+        assert(extent->is_mutation_pending());
+        state = nextent_state_t::MUTATION_PENDING;
+        node_stage = node_stage_t(
+          reinterpret_cast<const FieldType*>(extent->get_read()),
+          get_length());
+      }
+      recorder = static_cast<recorder_t*>(extent->get_recorder());
+      assert(recorder);
+      mut.emplace(extent->get_mutable());
+    }
     ValueDeltaRecorder* p_value_recorder = nullptr;
-    if (state == nextent_state_t::MUTATION_PENDING) {
+    if (state == nextent_state_t::MUTATION_PENDING ||
+        state == nextent_state_t::INPLACE_PENDING) {
       p_value_recorder = recorder->get_value_recorder();
     }
     return {*mut, p_value_recorder};

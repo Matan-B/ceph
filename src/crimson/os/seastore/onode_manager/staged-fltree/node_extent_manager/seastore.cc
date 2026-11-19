@@ -47,16 +47,34 @@ static DeltaRecorderURef create_replay_recorder(
 }
 
 NodeExtentRef SeastoreNodeExtent::mutate(
-    context_t c, DeltaRecorderURef&& _recorder)
+    context_t c, DeltaRecorderURef&& _recorder, mutate_mode_t mode)
 {
-  DEBUGT("mutate {} ...", c.t, *this);
+  DEBUGT("mutate {} mode={} ...", c.t, *this, static_cast<int>(mode));
   auto p_handle = static_cast<TransactionManagerHandle*>(&c.nm);
-  auto extent = p_handle->tm.get_mutable_extent(c.t, this);
+  auto extent = p_handle->tm.get_mutable_extent(c.t, this, mode);
   auto ret = extent->cast<SeastoreNodeExtent>();
-  // A replayed extent may already have an empty recorder, we discard it for
-  // simplicity.
+  const bool has_recorded = (recorder && !recorder->is_empty());
+  if (ret.get() == this) {
+    // mutated in place, see CachedExtent::inplace_writer
+    assert(is_inplace_pending());
+    if (!has_recorded) {
+      // first in-place mutation of this extent by the transaction
+      recorder = std::move(_recorder);
+    } // else: mutated in place earlier, keep recording into the same recorder
+    return ret;
+  }
   assert(!ret->recorder || ret->recorder->is_empty());
-  ret->recorder = std::move(_recorder);
+  if (has_recorded) {
+    // This extent was mutated in place earlier in the transaction and is now
+    // copied for a layout change: the copy already holds the in-place bytes,
+    // move the deltas recorded so far along so the delta of the copy covers
+    // both, relative to the committed version.
+    ret->recorder = std::move(recorder);
+  } else {
+    // A replayed extent may already have an empty recorder, we discard it
+    // for simplicity.
+    ret->recorder = std::move(_recorder);
+  }
   return ret;
 }
 

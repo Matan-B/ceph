@@ -223,13 +223,21 @@ void tree_cursor_t::Cache::maybe_duplicate(const node_version_t& current_version
   if (version.state == current_version.state) {
     // cache is already latest.
   } else if (version.state < current_version.state) {
-    // the extent has been copied but the layout has not been changed.
+    // the extent has been copied (or is mutated in place) but the layout has
+    // not been changed.
     assert(p_node_base != nullptr);
     assert(key_view.has_value());
     assert(p_value_header != nullptr);
 
     auto current_p_node_base = ref_leaf_node->read();
-    assert(current_p_node_base != p_node_base);
+    if (current_p_node_base == p_node_base) {
+      // READ_ONLY -> INPLACE_PENDING: same memory, pointers stay valid
+      assert(current_version.state == nextent_state_t::INPLACE_PENDING);
+      version.state = current_version.state;
+      value_payload_mut.reset();
+      p_value_recorder = nullptr;
+      return;
+    }
     auto node_size = ref_leaf_node->get_node_size();
 
     version.state = current_version.state;

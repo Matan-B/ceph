@@ -1430,8 +1430,13 @@ public:
    */
   CachedExtentRef duplicate_for_write(
     Transaction &t,    ///< [in, out] current transaction
-    CachedExtentRef i  ///< [in] ref to existing extent
+    CachedExtentRef i, ///< [in] ref to existing extent
+    mutate_mode_t mode = mutate_mode_t::COPY
   );
+
+  /// Whether t may mutate the stable extent i in place, see
+  /// CachedExtent::inplace_writer.
+  bool can_mutate_inplace(const Transaction &t, const CachedExtent &i) const;
 
   /**
    * set_segment_provider
@@ -1836,6 +1841,10 @@ private:
     if (ext.is_shadow_extent()) {
       return;
     }
+    if (ext.is_inplace_pending()) {
+      // kept out of the pinboard until committed, see inplace_writer
+      return;
+    }
     if (hint == CACHE_HINT_NOCACHE && is_logical_type(ext.get_type())) {
       return;
     }
@@ -1926,6 +1935,8 @@ private:
     uint64_t ool_record_metadata_bytes = 0;
     uint64_t ool_record_data_bytes = 0;
     uint64_t inline_record_metadata_bytes = 0; // metadata exclude the delta bytes
+    // mutated without copy-on-write, see CachedExtent::inplace_writer
+    uint64_t num_inplace_mutated_extents = 0;
   };
 
   struct success_read_trans_efforts_t {
