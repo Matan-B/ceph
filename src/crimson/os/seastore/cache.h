@@ -71,13 +71,11 @@ class SegmentProvider;
  *
  * Internally, in phase 1, the fields in Transaction are filled in.
  * - reads may block if the referenced extent is being written
- * - once a read obtains a particular CachedExtentRef for a paddr_t,
- *   it'll always get the same one until overwritten
  * - once a paddr_t is overwritten or written, subsequent reads of
  *   that addr will get the new ref
  *
- * In phase 2, if all extents in the read set are valid (not expired),
- * we can commit (otherwise, we fail and the user must retry).
+ * In phase 2 the transaction commits. It can not have been invalidated:
+ * a shard has a single writer (TransactionManager::writer_lock).
  * - Expire all extents in the retired_set (they must all be valid)
  * - Remove all extents in the retired_set from Cache::extents
  * - Mark all extents in the write_set wait_io(), add promises to
@@ -136,15 +134,6 @@ public:
               *ret, name, src, is_weak);
     assert(!is_weak || src == Transaction::src_t::READ);
     return ret;
-  }
-
-  /// Resets transaction preserving
-  void reset_transaction_preserve_handle(Transaction &t) {
-    LOG_PREFIX(Cache::reset_transaction_preserve_handle);
-    if (t.did_reset()) {
-      SUBDEBUGT(seastore_t, "reset", t);
-    }
-    t.reset_preserve_handle();
   }
 
   /// Declare ref retired in t
@@ -2082,7 +2071,8 @@ private:
   * commit_replace_extent()
   * replace-and-invalidate path (to be deprecated..)
   *
-  * Invalidates `prev` for readers (conflict-and-retry) and replaces it with `next`.
+  * Invalidates `prev` (readers holding it restart, see
+  * Transaction::reader_is_stale()) and replaces it with `next`.
   */
   void commit_replace_extent(Transaction& t, CachedExtentRef next, CachedExtentRef prev);
 

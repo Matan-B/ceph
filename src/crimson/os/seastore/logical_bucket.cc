@@ -148,14 +148,12 @@ public:
   }
 
   seastar::future<> demote() final {
-    return repeat_eagain([this] {
-      return ecb->with_transaction_intr(
-        Transaction::src_t::DEMOTE,
-        "demote", cache_hint_t::get_nocache(),
-        [this](auto &t) {
+    return ecb->with_transaction_intr(
+      Transaction::src_t::DEMOTE,
+      "demote", cache_hint_t::get_nocache(),
+      [this](auto &t) {
 	  return run_demote(t);
-	});
-    }).handle_error(crimson::ct_error::assert_all("impossible"));
+	}).handle_error(crimson::ct_error::assert_all("impossible"));
   }
 
 private:

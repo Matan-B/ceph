@@ -70,7 +70,6 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
     ++(shard_stats.pending_io_num);
     // For submit_transaction_direct()
     ++(shard_stats.processing_inlock_io_num);
-    ++(shard_stats.repeat_io_num);
 
     return with_transaction_intr(
       Transaction::src_t::MUTATE,

@@ -417,14 +417,12 @@ public:
   seastar::future<> promote() {
     assert(enabled());
     std::list<CachedExtentRef> promoting_extents;
-    co_await repeat_eagain([this, &promoting_extents] {
-      return ecb->with_transaction_intr(
-        Transaction::src_t::PROMOTE,
+    co_await ecb->with_transaction_intr(
+      Transaction::src_t::PROMOTE,
 	"promote", cache_hint_t::get_nocache(),
-        [this, &promoting_extents](auto &t) {
+      [this, &promoting_extents](auto &t) {
 	  return run_promote(t, promoting_extents);
-	});
-    }).handle_error(crimson::ct_error::assert_all("error occupied during promotion"));
+	}).handle_error(crimson::ct_error::assert_all("error occupied during promotion"));
   }
 
 private:

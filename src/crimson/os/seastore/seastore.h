@@ -270,10 +270,6 @@ public:
       seastar::lowres_clock::duration get_onode_time{0};
       seastar::lowres_clock::duration submit_time{0};
 
-      void reset_preserve_handle(TransactionManager &tm) {
-        tm.reset_transaction_preserve_handle(*transaction);
-        iter = ext_transaction.begin();
-      }
     };
 
     // Transactions waiting to be merged into the next batch, across all the
@@ -484,9 +480,6 @@ public:
       100
     };
 
-    // Buckets for the per-transaction conflict/replay distribution.
-    static constexpr std::size_t REPLAY_BUCKETS = 16;
-
     static constexpr auto STAGE_MAX = static_cast<std::size_t>(txn_stage_t::MAX);
     // Upper bounds (milliseconds) for the per-stage do_transaction latency
     // histograms. Smallest bucket is 1ms; sub-ms is below lowres_clock
@@ -501,7 +494,6 @@ public:
 
     struct {
       std::array<seastar::metrics::histogram, LAT_MAX> op_lat;
-      seastar::metrics::histogram conflict_replays;
       std::array<seastar::metrics::histogram, STAGE_MAX> stage_lat;
       uint64_t onode_lookups = 0;      // tree lookups
       uint64_t onode_lookup_nodes = 0; // nodes searched (~depth/lookup)
@@ -552,21 +544,6 @@ public:
       if (!found && !lat.buckets.empty()) {
         ++lat.buckets.back().count;
       }
-    }
-
-    // Record how many times a just-completed transaction was conflicted/replayed.
-    // Called only from the do_transaction_no_callbacks() completion path.
-    void add_conflict_replay_sample(std::size_t num_replays) {
-      auto& hist = stats.conflict_replays;
-      if (hist.buckets.empty()) {
-        // register_metrics() did not run (store inactive); nothing to record.
-        return;
-      }
-      std::size_t idx = num_replays < REPLAY_BUCKETS ?
-        num_replays : REPLAY_BUCKETS - 1;
-      ++hist.buckets[idx].count;
-      ++hist.sample_count;
-      hist.sample_sum += num_replays;
     }
 
     // Record the latency of one do_transaction stage (milliseconds). Buckets are

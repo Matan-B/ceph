@@ -203,28 +203,6 @@ void SeaStore::Shard::register_metrics(store_index_t store_index)
     );
   }
 
-  stats.conflict_replays.buckets.resize(REPLAY_BUCKETS);
-  for (std::size_t i = 0; i < REPLAY_BUCKETS; ++i) {
-    stats.conflict_replays.buckets[i].upper_bound = i;
-    stats.conflict_replays.buckets[i].count = 0;
-  }
-  metrics.add_group(
-    "seastore",
-    {
-      sm::make_histogram(
-        "conflict_replay_distribution",
-        [this]() -> seastar::metrics::histogram& {
-          return stats.conflict_replays;
-        },
-        sm::description("distribution of per-transaction conflict/replay counts "
-                        "before commit, for user transactions submitted via "
-                        "do_transaction (the reused-transaction / "
-                        "with_repeat_trans_intr path); not all MUTATE transactions"),
-        {sm::label_instance("shard_store_index", std::to_string(store_index))}
-      )
-    }
-  );
-
   std::pair<txn_stage_t, sm::label_instance> labels_by_stage[] = {
     {txn_stage_t::THROTTLER_WAIT,        sm::label_instance("stage", "throttler_wait")},
     {txn_stage_t::BUILD,                 sm::label_instance("stage", "build")},
@@ -821,9 +799,8 @@ SeaStore::Shard::mkfs_managers()
   ++(shard_stats.processing_inlock_io_num);
   TransactionRef t = transaction_manager->create_transaction(
     Transaction::src_t::MUTATE, "mkfs_seastore", CACHE_HINT_TOUCH);
-   co_await with_repeat_trans_intr(*t,
+   co_await with_trans_intr(*t,
     seastar::coroutine::lambda([&](auto &tr) -> TransactionManager::alloc_extent_iertr::future<> {
-    ++(shard_stats.repeat_io_num);
     DEBUGT("...", tr);
     co_await onode_manager->mkfs(tr);
     auto coll_root = co_await collection_manager->mkfs(tr);
@@ -1111,13 +1088,9 @@ seastar::future<> SeaStore::report_stats()
          io_total.read_num/seconds/seastar::this_smp_shard_count(),
          io_total.get_bg_num()/seconds/seastar::this_smp_shard_count(),
          io_total.flush_num/seconds/seastar::this_smp_shard_count());
-    auto calc_conflicts = [](uint64_t ios, uint64_t repeats) {
-      return (double)(repeats-ios)/ios;
-    };
-    INFO("trans conflicts: {:.2f},{:.2f},{:.2f}",
-         calc_conflicts(io_total.io_num, io_total.repeat_io_num),
-         calc_conflicts(io_total.read_num, io_total.repeat_read_num),
-         calc_conflicts(io_total.get_bg_num(), io_total.get_repeat_bg_num()));
+    // only readers restart, writers never conflict (single writer)
+    INFO("reader restarts: {:.2f}",
+         (double)(io_total.repeat_read_num - io_total.read_num)/io_total.read_num);
     INFO("trans outstanding: {},{},{},{} "
          "per-shard: {:.2f}({:.2f},{:.2f},{:.2f},{:.2f}),{:.2f},{:.2f},{:.2f}",
          io_total.pending_io_num,
@@ -2120,15 +2093,11 @@ seastar::future<> SeaStore::Shard::run_one_batch(
   auto writer_units = co_await seastar::get_units(
     transaction_manager->get_writer_lock(), 1);
 
-  co_await with_repeat_trans_intr(
-    [&, this] {
-      // Preserve handle and rewind the external iterator before each attempt.
-      ctx.reset_preserve_handle(*transaction_manager);
-    },
+  // Single writer: the batch can not conflict, it runs exactly once.
+  co_await with_trans_intr(
     *ctx.transaction,
     seastar::coroutine::lambda([&ctx, this, FNAME](auto &t)
 			       -> tm_ret {
-      ++(shard_stats.repeat_io_num);
 #ifndef NDEBUG
       TRACET(" transaction dump:\n", t);
       JSONFormatter f(true);
@@ -2181,7 +2150,6 @@ seastar::future<> SeaStore::Shard::run_one_batch(
   );
 
   DEBUGT("done", *ctx.transaction);
-  add_conflict_replay_sample(ctx.transaction->get_num_replays());
   {
     auto& pd = ctx.transaction->get_phase_durations();
     auto total = seastar::lowres_clock::now() - ctx.begin_timestamp;
@@ -3425,22 +3393,18 @@ seastar::future<> SeaStore::Shard::write_meta(
   // For TM::submit_transaction()
   ++(shard_stats.processing_inlock_io_num);
 
-  return repeat_eagain([this, &key, &value] {
-    ++(shard_stats.repeat_io_num);
-
-    return transaction_manager->with_transaction_intr(
-      Transaction::src_t::MUTATE,
-      "write_meta",
-      CACHE_HINT_NOCACHE,
-      [this, &key, &value](auto& t)
-    {
-      LOG_PREFIX(SeaStoreS::write_meta);
-      DEBUGT("key={} value={} ...", t, key, value);
-      return transaction_manager->update_root_meta(
-        t, key, value
-      ).si_then([this, &t] {
-        return transaction_manager->submit_transaction(t);
-      });
+  return transaction_manager->with_transaction_intr(
+    Transaction::src_t::MUTATE,
+    "write_meta",
+    CACHE_HINT_NOCACHE,
+    [this, &key, &value](auto& t)
+  {
+    LOG_PREFIX(SeaStoreS::write_meta);
+    DEBUGT("key={} value={} ...", t, key, value);
+    return transaction_manager->update_root_meta(
+      t, key, value
+    ).si_then([this, &t] {
+      return transaction_manager->submit_transaction(t);
     });
   }).handle_error(
     crimson::ct_error::assert_all("Invalid error in SeaStoreS::write_meta")
@@ -3565,11 +3529,8 @@ shard_stats_t SeaStore::Shard::get_io_stats(
 
   if (report_detail && seconds != 0) {
     LOG_PREFIX(SeaStoreS::get_io_stats);
-    auto calc_conflicts = [](uint64_t ios, uint64_t repeats) {
-      return (double)(repeats-ios)/ios;
-    };
     INFO("iops={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f}),{:.2f} "
-         "conflicts={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f}) "
+         "reader_restarts={:.2f} "
          "outstanding={}({},{},{},{}),{},{},{}",
          // iops
          ret.io_num/seconds,
@@ -3580,14 +3541,8 @@ shard_stats_t SeaStore::Shard::get_io_stats(
          ret.cleaner_main_num/seconds,
          ret.cleaner_cold_num/seconds,
          ret.flush_num/seconds,
-         // conflicts
-         calc_conflicts(ret.io_num, ret.repeat_io_num),
-         calc_conflicts(ret.read_num, ret.repeat_read_num),
-         calc_conflicts(ret.get_bg_num(), ret.get_repeat_bg_num()),
-         calc_conflicts(ret.trim_alloc_num, ret.repeat_trim_alloc_num),
-         calc_conflicts(ret.trim_dirty_num, ret.repeat_trim_dirty_num),
-         calc_conflicts(ret.cleaner_main_num, ret.repeat_cleaner_main_num),
-         calc_conflicts(ret.cleaner_cold_num, ret.repeat_cleaner_cold_num),
+         // reader restarts, writers never conflict (single writer)
+         (double)(ret.repeat_read_num - ret.read_num)/ret.read_num,
          // outstanding
          ret.pending_io_num,
          ret.starting_io_num,

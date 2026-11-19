@@ -101,11 +101,6 @@ public:
     return cache->get_stats(report_detail, seconds);
   }
 
-  /// Resets transaction
-  void reset_transaction_preserve_handle(Transaction &t) {
-    return cache->reset_transaction_preserve_handle(t);
-  }
-
   /**
    * relocate_logical_extent
    *

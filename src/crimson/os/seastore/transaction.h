@@ -412,12 +412,6 @@ public:
     return conflicted;
   }
 
-  // Number of times this transaction was conflicted and replayed before
-  // finally committing. do_transaction_no_callbacks() (user MUTATE writes)
-  std::size_t get_num_replays() const {
-    return num_replays;
-  }
-
   /**
    * Reader validation
    *
@@ -456,7 +450,7 @@ public:
     reader_checked_epoch = invalidation_epoch;
   }
 
-  // Time spent in each sub-phase of submit_transaction, accumulated across retries
+  // Time spent in each sub-phase of submit_transaction
   struct phase_durations_t {
     std::chrono::steady_clock::duration reserve{0};         // enter reserve + epm reserve
     std::chrono::steady_clock::duration ool_write{0};       // delayed + preallocated OOL writes
@@ -509,50 +503,6 @@ public:
   uint64_t write_hit_cold = 0;
   uint64_t read_hit_hot = 0;
   uint64_t read_hit_cold = 0;
-
-  void reset_preserve_handle() {
-    write_hit_hot = 0;
-    write_hit_cold = 0;
-    read_hit_hot = 0;
-    read_hit_cold = 0;
-    root.reset();
-    offset = 0;
-    delayed_temp_offset = 0;
-    fresh_backref_extents = 0;
-    invalidate_clear_write_set();
-    mutated_block_list.clear();
-    fresh_block_stats = {};
-    num_delayed_invalid_extents = 0;
-    num_allocated_invalid_extents = 0;
-    delayed_alloc_list.clear();
-    inline_block_list.clear();
-    ool_block_list.clear();
-    inplace_ool_block_list.clear();
-    pre_alloc_list.clear();
-    pre_inplace_rewrite_list.clear();
-    retired_set.clear();
-    existing_block_list.clear();
-    existing_block_stats = {};
-    onode_tree_stats = {};
-    omap_tree_stats = {};
-    lba_tree_stats = {};
-    backref_tree_stats = {};
-    ool_write_stats = {};
-    rewrite_stats = {};
-    conflicted = false;
-    force_rewrite_invalidate = false;
-    assert(backref_entries.empty());
-    if (!has_reset) {
-      has_reset = true;
-    }
-    get_handle().exit();
-    views.clear();
-    touched_prefix.clear();
-  }
-
-  bool did_reset() const {
-    return has_reset;
-  }
 
   struct tree_stats_t {
     uint64_t depth = 0;
@@ -795,11 +745,7 @@ private:
 
   bool conflicted = false;
 
-  std::size_t num_replays = 0;
-
   phase_durations_t phase_durations;
-
-  bool has_reset = false;
 
   OrderingHandle handle;
 

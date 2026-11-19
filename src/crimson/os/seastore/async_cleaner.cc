@@ -643,32 +643,28 @@ JournalTrimmerImpl::trim_alloc()
   ++(shard_stats.trim_alloc_num);
   ++(shard_stats.pending_bg_num);
 
-  return repeat_eagain([this, FNAME, &shard_stats] {
-    ++(shard_stats.repeat_trim_alloc_num);
-
-    return extent_callback->with_transaction_intr(
-      Transaction::src_t::TRIM_ALLOC,
-      "trim_alloc",
-      CACHE_HINT_NOCACHE,
-      [this, FNAME](auto &t)
+  return extent_callback->with_transaction_intr(
+    Transaction::src_t::TRIM_ALLOC,
+    "trim_alloc",
+    CACHE_HINT_NOCACHE,
+    [this, FNAME](auto &t)
+  {
+    auto target = get_alloc_tail_target();
+    DEBUGT("start, alloc_tail={}, target={}",
+           t, journal_alloc_tail, target);
+    return backref_manager.merge_cached_backrefs(
+      t,
+      target,
+      config.max_backref_bytes_per_cycle
+    ).si_then([this, FNAME, &t](auto trim_alloc_to)
+      -> ExtentCallbackInterface::submit_transaction_direct_iertr::future<>
     {
-      auto target = get_alloc_tail_target();
-      DEBUGT("start, alloc_tail={}, target={}",
-             t, journal_alloc_tail, target);
-      return backref_manager.merge_cached_backrefs(
-        t,
-        target,
-        config.max_backref_bytes_per_cycle
-      ).si_then([this, FNAME, &t](auto trim_alloc_to)
-        -> ExtentCallbackInterface::submit_transaction_direct_iertr::future<>
-      {
-        DEBUGT("trim_alloc_to={}", t, trim_alloc_to);
-        if (trim_alloc_to != JOURNAL_SEQ_NULL) {
-          return extent_callback->submit_transaction_direct(
-            t, std::make_optional<journal_seq_t>(trim_alloc_to));
-        }
-        return seastar::now();
-      });
+      DEBUGT("trim_alloc_to={}", t, trim_alloc_to);
+      if (trim_alloc_to != JOURNAL_SEQ_NULL) {
+        return extent_callback->submit_transaction_direct(
+          t, std::make_optional<journal_seq_t>(trim_alloc_to));
+      }
+      return seastar::now();
     });
   }).finally([this, FNAME, &shard_stats] {
     DEBUG("finish, alloc_tail={}", journal_alloc_tail);
@@ -694,15 +690,12 @@ JournalTrimmerImpl::trim_dirty()
 	seastar::stop_iteration>(seastar::stop_iteration::yes);
     }
     ++(shard_stats.pending_bg_num);
-    return repeat_eagain([this, FNAME, &shard_stats, target] {
-      ++(shard_stats.repeat_trim_dirty_num);
-
-      return extent_callback->with_transaction_intr(
+    return extent_callback->with_transaction_intr(
 	Transaction::src_t::TRIM_DIRTY,
 	"trim_dirty",
 	CACHE_HINT_NOCACHE,
 	[this, FNAME, target](auto &t)
-      {
+    {
 	DEBUGT("start, dirty_tail={}, target={}",
 	       t, journal_dirty_tail, target);
 	return extent_callback->get_next_dirty_extents(
@@ -718,17 +711,16 @@ JournalTrimmerImpl::trim_dirty()
 	    return trans_intr::do_for_each(
 	      dirty_list,
 	      [this, &t](auto &e) {
-              return extent_callback->maybe_remove_shadow(t, *e
-              ).si_then([this, &t, e] {
+            return extent_callback->maybe_remove_shadow(t, *e
+            ).si_then([this, &t, e] {
 	        return extent_callback->rewrite_extent(
 		  t, e, INIT_GENERATION, NULL_TIME);
-              });
+            });
 	    });
 	  });
 	}).si_then([this, &t] {
 	  return extent_callback->submit_transaction_direct(t);
 	});
-      });
     }).safe_then([] {
       return seastar::stop_iteration::no;
     }).finally([this, FNAME, &shard_stats] {
@@ -1311,58 +1303,49 @@ do_reclaim_space_ret do_reclaim_space(
   // 	tree doesn't match the extent's paddr
   // 3. the extent is physical and doesn't exist in the
   // 	lba tree, backref tree or backref cache;
-  return repeat_eagain([&extent_callback, &backref_extents,
-			&shard_stats, &pin_list, &reclaimed,
-			&runs, is_cold, &backref_manager,
-			modify_time, start_pos, end_pos, target_generation] {
-    reclaimed = 0;
-    runs++;
-    transaction_type_t src;
-    if (is_cold) {
-      src = Transaction::src_t::CLEANER_COLD;
-      ++(shard_stats.repeat_cleaner_cold_num);
-    } else {
-      src = Transaction::src_t::CLEANER_MAIN;
-      ++(shard_stats.repeat_cleaner_main_num);
-    }
-    return extent_callback.with_transaction_intr(
-      src,
-      "clean_reclaim_space",
-      CACHE_HINT_NOCACHE,
-      [&extent_callback, &backref_extents, &pin_list, modify_time,
-      &backref_manager, &reclaimed, start_pos, end_pos,
-      target_generation](auto &t)
-    {
-      return seastar::do_with(
-        std::vector<CachedExtentRef>(backref_extents),
-        [&extent_callback, &t, &reclaimed, &pin_list, modify_time,
+  reclaimed = 0;
+  runs++;
+  transaction_type_t src = is_cold
+    ? Transaction::src_t::CLEANER_COLD
+    : Transaction::src_t::CLEANER_MAIN;
+  return extent_callback.with_transaction_intr(
+    src,
+    "clean_reclaim_space",
+    CACHE_HINT_NOCACHE,
+    [&extent_callback, &backref_extents, &pin_list, modify_time,
+    &backref_manager, &reclaimed, start_pos, end_pos,
+    target_generation](auto &t)
+  {
+    return seastar::do_with(
+      std::vector<CachedExtentRef>(backref_extents),
+      [&extent_callback, &t, &reclaimed, &pin_list, modify_time,
 	&backref_manager, start_pos, end_pos, target_generation](auto &extents)
-      {
-        LOG_PREFIX(SegmentCleaner::do_reclaim_space);
-        // calculate live extents
-        auto cached_backref_entries =
-          backref_manager.get_cached_backref_entries_in_range(start_pos, end_pos);
-        backref_entry_query_set_t backref_entries;
-        for (auto &pin : pin_list) {
+    {
+      LOG_PREFIX(SegmentCleaner::do_reclaim_space);
+      // calculate live extents
+      auto cached_backref_entries =
+        backref_manager.get_cached_backref_entries_in_range(start_pos, end_pos);
+      backref_entry_query_set_t backref_entries;
+      for (auto &pin : pin_list) {
 	  pin.renew_cursor(t);
-          backref_entries.emplace(
-            pin.get_key(),
-            pin.get_val(),
-            pin.get_length(),
-            pin.get_type());
+        backref_entries.emplace(
+          pin.get_key(),
+          pin.get_val(),
+          pin.get_length(),
+          pin.get_type());
+      }
+      for (auto &cached_backref : cached_backref_entries) {
+        if (cached_backref.laddr == L_ADDR_NULL) {
+          auto it = backref_entries.find(cached_backref.paddr);
+          assert(it->len == cached_backref.len);
+          backref_entries.erase(it);
+        } else {
+          backref_entries.emplace(cached_backref);
         }
-        for (auto &cached_backref : cached_backref_entries) {
-          if (cached_backref.laddr == L_ADDR_NULL) {
-            auto it = backref_entries.find(cached_backref.paddr);
-            assert(it->len == cached_backref.len);
-            backref_entries.erase(it);
-          } else {
-            backref_entries.emplace(cached_backref);
-          }
-        }
-        // retrieve live extents
-        DEBUGT("start, backref_entries={}, backref_extents={}",
-               t, backref_entries.size(), extents.size());
+      }
+      // retrieve live extents
+      DEBUGT("start, backref_entries={}, backref_extents={}",
+             t, backref_entries.size(), extents.size());
 	return seastar::do_with(
 	  std::move(backref_entries),
 	  [&extent_callback, &extents, &t](auto &backref_entries) {
@@ -1390,17 +1373,16 @@ do_reclaim_space_ret do_reclaim_space(
 	  });
 	}).si_then([FNAME, &extents, &extent_callback,
 		    &reclaimed, &t, modify_time, target_generation] {
-          DEBUGT("reclaim {} extents", t, extents.size());
-          // rewrite live extents
+        DEBUGT("reclaim {} extents", t, extents.size());
+        // rewrite live extents
 	  for (auto &ext : extents) {
 	    reclaimed += ext->get_length();
 	  }
 	  return extent_callback.rewrite_extents(
 	    t, extents, target_generation, PLACEMENT_HINT_NULL, modify_time);
-        });
-      }).si_then([&extent_callback, &t] {
-        return extent_callback.submit_transaction_direct(t);
       });
+    }).si_then([&extent_callback, &t] {
+      return extent_callback.submit_transaction_direct(t);
     });
   }).finally([&shard_stats] {
     assert(shard_stats.pending_bg_num);
