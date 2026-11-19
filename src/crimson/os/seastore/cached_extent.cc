@@ -94,29 +94,9 @@ std::ostream &operator<<(std::ostream &out, const CachedExtent &ext)
 trans_spec_view_t::trans_spec_view_t(
   Transaction &t) : t(&t) {}
 
-bool trans_spec_view_t::cmp_t::operator()(
-  const trans_spec_view_t &lhs,
-  const trans_spec_view_t &rhs) const
+bool trans_spec_view_t::is_of(transaction_id_t tid) const
 {
-  transaction_id_t l = ((lhs.t == nullptr) ? 0 : lhs.t->get_trans_id());
-  transaction_id_t r = ((rhs.t == nullptr) ? 0 : rhs.t->get_trans_id());
-  return l < r;
-}
-
-bool trans_spec_view_t::cmp_t::operator()(
-  const transaction_id_t &lhs,
-  const trans_spec_view_t &rhs) const
-{
-  transaction_id_t r = ((rhs.t == nullptr) ? 0 : rhs.t->get_trans_id());
-  return lhs < r;
-}
-
-bool trans_spec_view_t::cmp_t::operator()(
-  const trans_spec_view_t &lhs,
-  const transaction_id_t &rhs) const
-{
-  transaction_id_t l = ((lhs.t == nullptr) ? 0 : lhs.t->get_trans_id());
-  return l < rhs;
+  return t != nullptr && t->get_trans_id() == tid;
 }
 
 CachedExtent::~CachedExtent()
@@ -137,18 +117,12 @@ CachedExtent* CachedExtent::maybe_get_transactional_view(Transaction &t) {
     return this;
   }
 
-  if (!mutation_pending_extents.empty()) {
-    auto it = mutation_pending_extents.find(tid, trans_spec_view_t::cmp_t());
-    if (it != mutation_pending_extents.end()) {
-      return (CachedExtent*)&(*it);
-    }
+  if (auto view = mutation_pending_extents.find(tid); view) {
+    return static_cast<CachedExtent*>(view);
   }
 
-  if (!retired_transactions.empty()) {
-    auto it = retired_transactions.find(tid, trans_spec_view_t::cmp_t());
-    if (it != retired_transactions.end()) {
-      return nullptr;
-    }
+  if (retired_transactions.find(tid)) {
+    return nullptr;
   }
 
   return this;
@@ -217,17 +191,14 @@ CachedExtent::is_viewable_by_trans(Transaction &t) {
     return std::make_pair(true, viewable_state_t::pending);
   }
 
-  // shared by multiple transactions
+  // shared by the writer and readers
   assert(is_stable_ready());
 
-  auto cmp = trans_spec_view_t::cmp_t();
-  if (mutation_pending_extents.find(trans_id, cmp) !=
-      mutation_pending_extents.end()) {
+  if (mutation_pending_extents.find(trans_id)) {
     return std::make_pair(false, viewable_state_t::stable_become_pending);
   }
 
-  if (retired_transactions.find(trans_id, cmp) !=
-      retired_transactions.end()) {
+  if (retired_transactions.find(trans_id)) {
     assert(t.is_stable_extent_retired(get_paddr(), get_length()));
     return std::make_pair(false, viewable_state_t::stable_become_retired);
   }

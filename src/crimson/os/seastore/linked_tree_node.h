@@ -418,13 +418,8 @@ public:
   };
 
   const copy_dests_t *get_copy_dests(Transaction &t) {
-    auto iter = copy_dests_by_trans.find(
-      t.get_trans_id(), trans_spec_view_t::cmp_t());
-    if (iter == copy_dests_by_trans.end()) {
-      return nullptr;
-    } else {
-      return static_cast<copy_dests_t*>(&*iter);
-    }
+    return static_cast<copy_dests_t*>(
+      copy_dests_by_trans.find(t.get_trans_id()));
   }
 
   void reset_child_ptr(btreenode_pos_t pos) {
@@ -446,19 +441,15 @@ protected:
     auto &me = down_cast();
     assert(me.is_stable());
     if (hint == CachedExtent::viewable_state_t::stable_become_pending) {
-      auto mut_iter = me.mutation_pending_extents.find(
-	t.get_trans_id(), trans_spec_view_t::cmp_t());
-      assert(mut_iter != me.mutation_pending_extents.end());
-      assert(copy_dests_by_trans.find(
-        t.get_trans_id(), trans_spec_view_t::cmp_t()) ==
-          copy_dests_by_trans.end());
-      return static_cast<T*>(&(*mut_iter));
+      auto mut_view = me.mutation_pending_extents.find(t.get_trans_id());
+      assert(mut_view);
+      assert(!copy_dests_by_trans.find(t.get_trans_id()));
+      return static_cast<T*>(static_cast<CachedExtent*>(mut_view));
     }
     ceph_assert(hint == CachedExtent::viewable_state_t::stable_become_retired);
-    auto iter = copy_dests_by_trans.find(
-      t.get_trans_id(), trans_spec_view_t::cmp_t());
-    ceph_assert(iter != copy_dests_by_trans.end());
-    auto &copy_dests = static_cast<copy_dests_t&>(*iter);
+    auto view = copy_dests_by_trans.find(t.get_trans_id());
+    ceph_assert(view);
+    auto &copy_dests = static_cast<copy_dests_t&>(*view);
     auto it = copy_dests.dests_by_key.lower_bound(key);
     if (it == copy_dests.dests_by_key.end() || (*it)->get_begin() > key) {
       ceph_assert(it != copy_dests.dests_by_key.begin());
@@ -471,28 +462,21 @@ protected:
   void add_copy_dest(Transaction &t, TCachedExtentRef<T> dest) {
     ceph_assert(down_cast().is_stable());
     ceph_assert(dest->is_pending());
-    auto tid = t.get_trans_id();
-    auto iter = copy_dests_by_trans.lower_bound(
-      tid, trans_spec_view_t::cmp_t());
-    if (iter != copy_dests_by_trans.end()) {
-      assert(iter->t != nullptr);
+    auto view = copy_dests_by_trans.find(t.get_trans_id());
+    if (!view) {
+      view = &t.add_transactional_view<copy_dests_t>(t);
+      copy_dests_by_trans.insert(*view);
     }
-    if (iter == copy_dests_by_trans.end() ||
-	iter->t->get_trans_id() != tid) {
-      iter = copy_dests_by_trans.insert_before(
-	iter, t.add_transactional_view<copy_dests_t>(t));
-    }
-    auto &copy_dests = static_cast<copy_dests_t&>(*iter);
+    auto &copy_dests = static_cast<copy_dests_t&>(*view);
     [[maybe_unused]] auto [it, inserted] =
       copy_dests.dests_by_key.insert(dest);
     assert(inserted || it->get() == dest.get());
   }
 
   void del_copy_dest(Transaction &t, TCachedExtentRef<T> dest) {
-    auto iter = copy_dests_by_trans.find(
-      t.get_trans_id(), trans_spec_view_t::cmp_t());
-    ceph_assert(iter != copy_dests_by_trans.end());
-    auto &copy_dests = static_cast<copy_dests_t&>(*iter);
+    auto view = copy_dests_by_trans.find(t.get_trans_id());
+    ceph_assert(view);
+    auto &copy_dests = static_cast<copy_dests_t&>(*view);
     auto it = copy_dests.dests_by_key.find(dest);
     ceph_assert(it != copy_dests.dests_by_key.end());
     copy_dests.dests_by_key.erase(dest);
@@ -1032,8 +1016,8 @@ private:
 
   std::set<TCachedExtentRef<T>, Comparator> copy_sources;
 
-  using trans_view_set_t = trans_spec_view_t::trans_view_set_t;
-  trans_view_set_t copy_dests_by_trans;
+  // at most one view, see trans_view_slot_t
+  trans_view_slot_t copy_dests_by_trans;
   template <typename, typename, typename>
   friend class ChildNode;
   template <typename>

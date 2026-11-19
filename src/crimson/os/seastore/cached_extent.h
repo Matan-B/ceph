@@ -75,20 +75,11 @@ struct trans_spec_view_t {
   trans_spec_view_t(Transaction &t);
   virtual ~trans_spec_view_t() = default;
 
-  struct cmp_t {
-    bool operator()(
-      const trans_spec_view_t &lhs,
-      const trans_spec_view_t &rhs) const;
-    bool operator()(
-      const transaction_id_t &lhs,
-      const trans_spec_view_t &rhs) const;
-    bool operator()(
-      const trans_spec_view_t &lhs,
-      const transaction_id_t &rhs) const;
-  };
+  bool is_of(transaction_id_t tid) const;
 
+  // unlinks itself from its trans_view_slot_t when destroyed
   using trans_view_hook_t =
-    boost::intrusive::set_member_hook<
+    boost::intrusive::list_member_hook<
       boost::intrusive::link_mode<
         boost::intrusive::auto_unlink>>;
   trans_view_hook_t trans_view_hook;
@@ -98,11 +89,45 @@ struct trans_spec_view_t {
       trans_spec_view_t,
       trans_view_hook_t,
       &trans_spec_view_t::trans_view_hook>;
-  using trans_view_set_t = boost::intrusive::set<
+};
+
+/**
+ * trans_view_slot_t
+ *
+ * The view a stable extent or tree node keeps of the transaction that
+ * mutates, retires or copies it (CachedExtent::mutation_pending_extents,
+ * CachedExtent::retired_transactions, ParentNode::copy_dests_by_trans).
+ *
+ * Those used to be sets keyed by transaction id, since any number of
+ * transactions could hold their own view of the same extent. With a single
+ * writer per shard (TransactionManager::writer_lock) only the writer ever
+ * creates one, READ transactions don't mutate, retire or copy, so there is
+ * at most one view at a time and a lookup is a single comparison.
+ */
+class trans_view_slot_t {
+  using list_t = boost::intrusive::list<
     trans_spec_view_t,
-    trans_view_member_options,
-    boost::intrusive::constant_time_size<false>,
-    boost::intrusive::compare<cmp_t>>;
+    trans_spec_view_t::trans_view_member_options,
+    boost::intrusive::constant_time_size<false>>;
+  list_t views;
+public:
+  bool empty() const {
+    return views.empty();
+  }
+  void insert(trans_spec_view_t &view) {
+    // single writer: no two transactions view the same extent
+    ceph_assert(views.empty());
+    views.push_back(view);
+  }
+  /// The view of the transaction tid, nullptr if it has none
+  trans_spec_view_t *find(transaction_id_t tid) {
+    if (views.empty() || !views.front().is_of(tid)) {
+      return nullptr;
+    }
+    return &views.front();
+  }
+  auto begin() { return views.begin(); }
+  auto end() { return views.end(); }
 };
 
 struct load_range_t {
@@ -986,8 +1011,9 @@ private:
   bool is_shadow = false;
 
 protected:
-  trans_view_set_t mutation_pending_extents;
-  trans_view_set_t retired_transactions;
+  // at most one view each, see trans_view_slot_t
+  trans_view_slot_t mutation_pending_extents;
+  trans_view_slot_t retired_transactions;
 
   CachedExtent(CachedExtent &&other) = delete;
 
@@ -1230,18 +1256,14 @@ struct paddr_cmp {
   }
 };
 
-// trans_retired_extent_link_t is used to link stable extents with
-// the transactions that retired them. With this link, we can find
-// out whether an extent has been retired by a specific transaction
-// in a way that's more efficient than searching through the transaction's
-// retired_set (Transaction::is_retired())
+// trans_retired_extent_link_t links a stable extent with the transaction
+// (the writer) that retired it. With this link, we can find out whether an
+// extent has been retired by a specific transaction without searching the
+// transaction's retired_set (Transaction::is_retired())
 struct trans_retired_extent_link_t {
   CachedExtentRef extent;
-  // We use trans_spec_view_t instead of transaction_id_t, so that,
-  // when a transaction is deleted or reset, we can efficiently remove
-  // that transaction from the extents' extent-transaction link set.
-  // Otherwise, we have to search through each extent's "retired_transactions"
-  // to remove the transaction
+  // A trans_spec_view_t, so that the link unlinks itself from the extent's
+  // retired_transactions slot when the transaction is destroyed.
   trans_spec_view_t trans_view;
   trans_retired_extent_link_t(CachedExtentRef extent, Transaction &t)
     : extent(extent), trans_view{t}

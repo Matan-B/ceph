@@ -1220,8 +1220,7 @@ CachedExtentRef Cache::duplicate_for_write(
   if (!is_root_type(ret->get_type())) {
     assert(ret->get_paddr().is_absolute());
   }
-  auto [iter, inserted] = i->mutation_pending_extents.insert(*ret);
-  ceph_assert(inserted);
+  i->mutation_pending_extents.insert(*ret);
   if (is_root_type(ret->get_type())) {
     t.root = ret->cast<RootBlock>();
   } else {
