@@ -2064,6 +2064,23 @@ seastar::future<> SeaStore::Shard::dispatch_batches()
   batch_in_flight = false;
 }
 
+namespace {
+// Rough upper bound of the space a batch may consume, reserved before the
+// writer lock is taken (see TransactionManager::writer_lock). The real
+// projected usage is only known once the batch is built.
+// TODO: derive this properly (metadata per op, deltas, OOL vs inline).
+io_usage_t estimate_batch_usage(const ceph::os::Transaction &t)
+{
+  constexpr std::size_t METADATA_PER_OP = 4096;
+  const std::size_t bytes =
+    t.get_num_bytes() + t.get_num_ops() * METADATA_PER_OP;
+  io_usage_t usage;
+  usage.inline_usage = bytes;
+  usage.cleaner_usage.main_usage = bytes;
+  return usage;
+}
+} // anonymous namespace
+
 seastar::future<> SeaStore::Shard::run_one_batch(
   ceph::os::Transaction&& _t)
 {
@@ -2091,6 +2108,17 @@ seastar::future<> SeaStore::Shard::run_one_batch(
   assert(shard_stats.waiting_throttler_io_num);
   --(shard_stats.waiting_throttler_io_num);
   ++(shard_stats.processing_inlock_io_num);
+
+  // Single writer per shard: reserve space first, then take the writer lock.
+  // Reserving may wait for background reclamation, which needs the writer
+  // lock, so it must not happen while holding it.
+  const auto usage = estimate_batch_usage(ctx.ext_transaction);
+  co_await transaction_manager->reserve_projected_usage(usage);
+  auto release_usage = seastar::defer([this, usage] {
+    transaction_manager->release_projected_usage(usage);
+  });
+  auto writer_units = co_await seastar::get_units(
+    transaction_manager->get_writer_lock(), 1);
 
   co_await with_repeat_trans_intr(
     [&, this] {
@@ -2140,7 +2168,8 @@ seastar::future<> SeaStore::Shard::run_one_batch(
 
       DEBUGT("completed all {} ops", t, total_ops);
       auto submit_start = seastar::lowres_clock::now();
-      co_await transaction_manager->submit_transaction(*ctx.transaction);
+      co_await transaction_manager->submit_transaction(
+        *ctx.transaction, true /* usage_reserved */);
       ctx.submit_time += seastar::lowres_clock::now() - submit_start;
     })
   ).handle_error(

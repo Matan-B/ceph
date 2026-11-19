@@ -664,7 +664,8 @@ TransactionManager::relocate_shadow_extent(
 
 TransactionManager::submit_transaction_iertr::future<>
 TransactionManager::submit_transaction(
-  Transaction &t)
+  Transaction &t,
+  bool usage_reserved)
 {
   LOG_PREFIX(TransactionManager::submit_transaction);
   SUBDEBUGT(seastore_t, "start, entering reserve_projected_usage", t);
@@ -674,6 +675,17 @@ TransactionManager::submit_transaction(
   );
 
   auto dispatch_result = epm->dispatch_delayed_extents(t);
+  if (usage_reserved) {
+    // Reserved by the caller before it took the writer lock. Waiting here
+    // would deadlock: background needs the writer lock to free space.
+    // TODO: the caller's reservation is an estimate, reconcile it with
+    //       dispatch_result.usage.
+    t.get_phase_durations().reserve +=
+      std::chrono::steady_clock::now() - reserve_start;
+    co_await do_submit_transaction(t, std::move(dispatch_result));
+    co_return;
+  }
+
   auto projected_usage = dispatch_result.usage;
   SUBTRACET(seastore_t, "waiting for projected_usage: {}", t, projected_usage);
   co_await trans_intr::make_interruptible(

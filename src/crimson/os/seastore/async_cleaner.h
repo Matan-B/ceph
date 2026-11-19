@@ -6,6 +6,7 @@
 #include <boost/intrusive/set.hpp>
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/metrics_types.hh>
+#include <seastar/core/semaphore.hh>
 
 #include "common/ceph_time.h"
 
@@ -295,6 +296,9 @@ public:
 
   virtual shard_stats_t& get_shard_stats() = 0;
 
+  /// The shard writer lock, see TransactionManager::writer_lock
+  virtual seastar::semaphore& get_writer_lock() = 0;
+
   /// Creates empty transaction
   /// weak transaction should be type READ
   virtual TransactionRef create_transaction(
@@ -451,17 +455,28 @@ private:
       const char* name,
       cache_hint_t cache_hint,
       Func &&f) {
-    return seastar::do_with(
-      create_transaction(src, name, cache_hint, IsWeak),
-      [f=std::forward<Func>(f)](auto &ref_t) mutable {
-        return with_trans_intr(
-          *ref_t,
-          [f=std::forward<Func>(f)](auto& t) mutable {
-            return f(t);
-          }
-        );
-      }
-    );
+    auto run = [this, src, name, cache_hint,
+                f=std::forward<Func>(f)]() mutable {
+      return seastar::do_with(
+        create_transaction(src, name, cache_hint, IsWeak),
+        [f=std::move(f)](auto &ref_t) mutable {
+          return with_trans_intr(
+            *ref_t,
+            [f=std::move(f)](auto& t) mutable {
+              return f(t);
+            }
+          );
+        }
+      );
+    };
+    if (IsWeak || src == Transaction::src_t::READ) {
+      // readers never take the writer lock
+      return run();
+    }
+    // Single writer per shard: a writing transaction holds the writer lock
+    // from creation to commit, so it never runs concurrently with a client
+    // batch or with another writing (e.g. background) transaction.
+    return seastar::with_semaphore(get_writer_lock(), 1, std::move(run));
   }
 };
 

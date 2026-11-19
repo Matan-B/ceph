@@ -14,6 +14,7 @@
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 #include <seastar/core/future.hh>
+#include <seastar/core/semaphore.hh>
 #include <seastar/util/defer.hh>
 
 #include "include/ceph_assert.h"
@@ -975,7 +976,20 @@ public:
    * Atomically submits transaction to persistence
    */
   using submit_transaction_iertr = base_iertr;
-  submit_transaction_iertr::future<> submit_transaction(Transaction &);
+  /// usage_reserved: the caller already reserved projected usage with
+  /// reserve_projected_usage() and releases it itself (see writer_lock).
+  submit_transaction_iertr::future<> submit_transaction(
+    Transaction &,
+    bool usage_reserved = false);
+
+  /// Reserve projected usage ahead of building a transaction, so that the
+  /// wait for background space reclamation happens outside the writer lock.
+  seastar::future<> reserve_projected_usage(io_usage_t usage) {
+    return epm->reserve_projected_usage(usage);
+  }
+  void release_projected_usage(const io_usage_t &usage) {
+    epm->release_projected_usage(usage);
+  }
 
   /**
    * flush
@@ -992,6 +1006,10 @@ public:
 
   shard_stats_t& get_shard_stats() {
     return shard_stats;
+  }
+
+  seastar::semaphore& get_writer_lock() final {
+    return writer_lock;
   }
 
   /// weak transaction should be type READ
@@ -1455,6 +1473,34 @@ private:
   bool full_extent_integrity_check = true;
 
   shard_stats_t& shard_stats;
+
+  /**
+   * writer_lock
+   *
+   * Single writer per shard. Every transaction that writes (client batches,
+   * write_meta, mkfs and every non-weak background transaction: trim dirty,
+   * trim alloc, cleaner, promote, demote) holds this lock from creation until
+   * it commits. No two writing transactions ever run concurrently on a shard,
+   * which is what allows dropping conflict detection: read_set, extent
+   * invalidation of other transactions, conflict retries and commit_lock.
+   *
+   * Only READ transactions run concurrently with the writer, see
+   * Cache::reader_epoch.
+   *
+   * Deadlock rule: a lock holder must never wait for background work, since
+   * background needs the lock to make progress. Client batches reserve
+   * projected usage before taking the lock (SeaStore::Shard::run_one_batch).
+   *
+   * TODO: allocation retries (wait_background() after eagain from an alloc)
+   *       still wait under the lock, as does write_meta's reservation.
+   * TODO: background transactions read from disk under the lock (e.g. the
+   *       cleaner's get_extents_if_live), delaying client batches. Split
+   *       their reads out (weak transactions) and keep only the rewrite
+   *       under the lock.
+   * TODO: fairness is FIFO; bound background work per turn to cap the
+   *       client latency it adds.
+   */
+  seastar::semaphore writer_lock{1};
 
   bool can_drop_backref() const {
     return cache->can_drop_backref();
