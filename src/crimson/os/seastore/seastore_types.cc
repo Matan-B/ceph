@@ -1449,13 +1449,7 @@ std::ostream& operator<<(std::ostream& out, const cache_access_stats_printer_t& 
   double load_absent = static_cast<double>(p.stats.load_absent);
   out << "trans-hit="
       << fmt::format(dfmt, trans_hit/total_access*100)
-      << "%(pend"
-      << fmt::format(dfmt, p.stats.trans_pending/trans_hit)
-      << ",dirt"
-      << fmt::format(dfmt, p.stats.trans_dirty/trans_hit)
-      << ",lru"
-      << fmt::format(dfmt, p.stats.trans_lru/trans_hit)
-      << "), cache-hit="
+      << "%, cache-hit="
       << fmt::format(dfmt, cache_hit/cache_access*100)
       << "%(dirt"
       << fmt::format(dfmt, p.stats.cache_dirty/cache_hit)

@@ -260,9 +260,6 @@ public:
       return ext->template cast<T>();
     });
   }
-  virtual CachedExtentRef get_extent_viewable_by_trans_sync(
-    Transaction &t,
-    CachedExtentRef extent) = 0;
   virtual get_child_iertr::future<> maybe_wait_accessible(
     Transaction &, CachedExtent&) = 0;
   virtual CachedExtentRef peek_extent_viewable_by_trans(
@@ -327,33 +324,6 @@ public:
       return {viewable, &me};
     }
     return {viewable, find_pending_version(t, key, state)};
-  }
-
-  template <typename ChildT>
-  TCachedExtentRef<ChildT> get_child_sync(
-    Transaction &t,
-    ExtentTransViewRetriever &etvr,
-    btreenode_pos_t pos,
-    node_key_t key)
-  {
-    auto &me = down_cast();
-    assert(children.capacity());
-    assert(key == down_cast().iter_idx(pos).get_key());
-    auto child = children[pos];
-    ceph_assert(!is_reserved_ptr(child));
-    if (is_valid_child_ptr(child)) {
-      auto ret = etvr.get_extent_viewable_by_trans_sync(
-        t, static_cast<ChildT*>(child));
-      return ret->template cast<ChildT>();
-    } else {
-      assert(me.is_pending());
-      auto &sparent = me.get_stable_for_key(key);
-      auto spos = sparent.lower_bound(key).get_offset();
-      child = sparent.children[spos];
-      auto ret = etvr.get_extent_viewable_by_trans_sync(
-        t, static_cast<ChildT*>(child));
-      return ret->template cast<ChildT>();
-    }
   }
 
   template <typename ChildT>
@@ -496,18 +466,6 @@ protected:
     }
     ceph_assert((*it)->get_begin() <= key && key < (*it)->get_end());
     return *it;
-  }
-
-  template <typename Func>
-  void for_each_copy_dest_set(Transaction &t, Func &&f) {
-    for (auto &dests : copy_dests_by_trans) {
-      assert(dests.t != nullptr);
-      if (dests.t->get_trans_id() == t.get_trans_id()) {
-        continue;
-      }
-      auto &copy_dests = static_cast<copy_dests_t&>(dests);
-      std::invoke(f, copy_dests);
-    }
   }
 
   void add_copy_dest(Transaction &t, TCachedExtentRef<T> dest) {

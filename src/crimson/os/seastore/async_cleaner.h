@@ -1313,13 +1313,6 @@ public:
   // be refused. Only RBMCleaner overrides this; SegmentCleaner returns false.
   virtual bool is_storage_full() const { return false; }
 
-  // Deferred-free backpressure (RBM only); no-ops for SegmentCleaner.
-  virtual void account_conflict_pending_free(std::size_t) {}
-  virtual void deaccount_conflict_pending_free(std::size_t) {}
-  virtual seastar::future<> wait_for_conflict_drain() {
-    return seastar::now();
-  }
-
   virtual bool should_block_io_on_clean() const = 0;
 
   virtual bool can_clean_space() const = 0;
@@ -1895,10 +1888,6 @@ public:
 
   void mark_space_free(paddr_t, extent_len_t) final;
 
-  void account_conflict_pending_free(std::size_t bytes) final;
-  void deaccount_conflict_pending_free(std::size_t bytes) final;
-  seastar::future<> wait_for_conflict_drain() final;
-
   void commit_space_used(paddr_t, extent_len_t) final;
 
   bool try_reserve_projected_usage(std::size_t) final;
@@ -2059,10 +2048,6 @@ private:
      */
     uint64_t projected_used_bytes = 0;
   } stats;
-
-  // Deferred frees of conflicted in-flight OOL writes; gates new OOL writes.
-  std::size_t conflict_pending_free_bytes = 0;
-  seastar::condition_variable conflict_drained;
 
   seastar::metrics::metric_group metrics;
   void register_metrics();

@@ -74,30 +74,6 @@ get_phy_tree_root<
   crimson::os::seastore::lba::LBABtree>(root_t &r);
 
 /**
- * Synchronous root-node fetch: returns the LBA root node extent from cache.
- * If the root_block is pending (being mutated), the root node is fetched
- * from the prior (stable) instance.  Asserts the node is in cache.
- */
-template <>
-CachedExtentRef get_phy_tree_root_node_sync<
-  crimson::os::seastore::lba::LBABtree>(
-  const RootBlockRef &root_block, op_context_t c)
-{
-  auto lba_root = root_block->lba_root_node;
-  if (!lba_root) {
-    ceph_assert(root_block->is_pending());
-    auto &prior = static_cast<RootBlock&>(*root_block->get_prior_instance());
-    lba_root = prior.lba_root_node;
-  } else {
-    ceph_assert(lba_root->is_initial_pending()
-      == root_block->is_pending());
-  }
-  ceph_assert(lba_root);
-  auto ret = c.cache.peek_extent_viewable_by_trans(c.trans, lba_root);
-  return ret;
-}
-
-/**
  * Async root-node fetch: returns (found, future<node>).  If the root node
  * pointer is known (lba_root_node != null), returns {true, future} that
  * resolves via get_extent_viewable_by_trans (may block if not yet readable).
@@ -1486,93 +1462,6 @@ BtreeLBAManager::remap_mappings(
   co_return ret;
 }
 
-/**
- * update_paddr_sync: synchronous paddr update for a mapping already in cache.
- * Used when a background rewrite transaction has relocated an extent --
- * the current transaction's pending leaf already has the entry, and we
- * just need to patch its paddr.  Uses lower_bound_sync (no I/O).
- */
-void BtreeLBAManager::update_paddr_sync(
-  Transaction &t,
-  laddr_t laddr,
-  paddr_t paddr,
-  extent_len_t len,
-  std::optional<paddr_t> shadow)
-{
-  LOG_PREFIX(BtreeLBAManager::update_paddr_sync);
-  DEBUGT("laddr={}, paddr={}", t, laddr, paddr);
-  auto c = get_context(t);
-  auto btree = get_btree_sync<LBABtree>(c);
-  auto iter = btree.lower_bound_sync(c, laddr);
-  while (iter.get_key() + iter.get_val().len <= laddr + len) {
-    assert(iter.get_leaf_node()->is_pending());
-    if (iter.get_val().pladdr.is_laddr() ||
-        iter.get_val().pladdr.get_paddr().is_zero()) {
-      TRACET("skipping mapping {}~{}", t, iter.get_key(), iter.get_val());
-      if (!iter.next_sync(c)) {
-        // can't reach the next mapping, which means the next
-        // mapping mustn't have been touched by the current
-        // transactions, we don't need to continue, just leave
-        return;
-      }
-      continue;
-    }
-    auto child = iter.get_leaf_node()->get_child_sync<LogicalChildNode>(
-      c.trans, c.cache, iter.get_leaf_pos(), iter.get_key());
-    ceph_assert(is_valid_child_ptr(child.get()));
-    if (child->is_initial_pending()) {
-      TRACET("{} is initial_pending, skipping", t, *child);
-      if (!iter.next_sync(c)) {
-        // can't reach the next mapping, which means the next
-        // mapping mustn't have been touched by the current
-        // transactions, we don't need to continue, just leave
-        return;
-      }
-      continue;
-    }
-    ceph_assert(child->is_exist_clean());
-    auto cursor = iter.get_cursor(c);
-    extent_len_t off = cursor->get_laddr().get_byte_distance<
-      extent_len_t>(laddr);
-    paddr_t shadow_paddr;
-    if (shadow) {
-      // the committing txn changed the shadow
-      // to *shadow
-      shadow_paddr = *shadow;
-      if (shadow_paddr != P_ADDR_NULL) {
-        shadow_paddr = shadow_paddr + off;
-      }
-    } else if (cursor->has_shadow_paddr()) {
-      // shadow is preserved by the committer,
-      // and the copy inherited one, so the source
-      // was promoted when it's copied
-      shadow_paddr = cursor->get_shadow_paddr();
-    } else {
-      // shadow is preserved, and nothing is
-      // inherited: not currently promoted
-      shadow_paddr = P_ADDR_NULL;
-    }
-    iter = btree.update(
-      c,
-      std::move(iter),
-      lba_map_val_t{
-        cursor->get_length(),
-        pladdr_t{paddr + off},
-        shadow_paddr,
-        cursor->get_refcount(),
-        cursor->get_checksum(),
-        cursor->get_extent_type()},
-      nullptr,
-      modification_t::TRANS_SYNC);
-    if (!iter.next_sync(c)) {
-      // can't reach the next mapping, which means the next
-      // mapping mustn't have been touched by the current
-      // transactions, we don't need to continue, just leave
-      return;
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Move / clone operations
 // ---------------------------------------------------------------------------
@@ -1582,11 +1471,12 @@ void BtreeLBAManager::update_paddr_sync(
  * src.  Steps:
  *   1. Build partial iterators for both src and dest cursors.
  *   2. Determine the pladdr: for indirect → local_clone_id, for direct → paddr.
- *   3. Register the key copy with the transaction (new_lba_key_copied) so
- *      that if a background rewrite changes src's paddr before commit, the
- *      dest copy gets patched too (via update_paddr_sync callback).
- *   4. btree.copy() inserts the new entry using src's value.
- *   5. Refresh src (may have been invalidated by the insert's splits).
+ *   3. btree.copy() inserts the new entry using src's value.
+ *   4. Refresh src (may have been invalidated by the insert's splits).
+ *
+ * No background rewrite can relocate src before this transaction commits
+ * (single writer per shard, see TransactionManager::writer_lock), so the
+ * copy never needs to be patched afterwards.
  */
 BtreeLBAManager::move_mapping_ret
 BtreeLBAManager::_copy_mapping(
@@ -1621,14 +1511,6 @@ BtreeLBAManager::_copy_mapping(
   } else {
     addr = ret.src->get_paddr();
   }
-  c.trans.new_lba_key_copied(
-    ret.src->get_key(),
-    dest_laddr,
-    ret.src->get_length(),
-    [this, c](laddr_t laddr, paddr_t paddr,
-              extent_len_t len, std::optional<paddr_t> shadow) {
-      update_paddr_sync(c.trans, laddr, paddr, len, shadow);
-    });
   auto [niter, inserted] = co_await btree.copy(
       c,
       std::move(iter),

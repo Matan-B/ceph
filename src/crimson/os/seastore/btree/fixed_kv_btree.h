@@ -46,16 +46,6 @@
 
 namespace crimson::os::seastore {
 
-enum modification_t {
-  USER_MODIFY,  // logical update (affects node state)
-  TRANS_SYNC    // synchronization-only update (should NOT count
-                // as modification and should avoid on_modify(),
-                // for example, BtreeLBAManager::update_paddr_sync
-                // does not change the logical mapping, only the
-                // physical location (paddr) of the same data, so
-                // TRANS_SYNC is used.
-};
-
 /**
  * Forward declarations - specialized per tree type (LBA or Backref) in
  * their respective .cc files.  These extract the tree-specific root pointer,
@@ -67,11 +57,6 @@ phy_tree_root_t& get_phy_tree_root(root_t& r);
 
 using get_phy_tree_root_node_ret =
   std::pair<bool, get_child_iertr::future<CachedExtentRef>>;
-
-template <typename T>
-CachedExtentRef get_phy_tree_root_node_sync(
-  const RootBlockRef &root_block,
-  op_context_t c);
 
 template <typename T>
 const get_phy_tree_root_node_ret get_phy_tree_root_node(
@@ -214,21 +199,6 @@ public:
           ret);
       }
 
-    }
-
-    // return true if reached the next mapping and false otherwise
-    bool next_sync(op_context_t c) {
-#ifndef NDEBUG
-      assert_valid();
-#endif
-      assert(is_full());
-      assert(!is_end());
-      leaf.pos++;
-      if (at_boundary()) {
-        return handle_boundary_sync(c);
-      } else {
-        return true;
-      }
     }
 
     /**
@@ -535,50 +505,6 @@ public:
       });
     }
 
-    // return true if reached the next mapping and false otherwise
-    bool handle_boundary_sync(op_context_t c) {
-      assert(at_boundary());
-      assert(is_full());
-      depth_t depth = 2;
-      // find the first level (from the leaf's parent up) with a right sibling
-      for (; depth <= get_depth(); depth++) {
-        auto &internal = get_internal(depth);
-        auto it = internal.node->iter_idx(internal.pos + 1);
-        if (it != internal.node->end()) {
-          break;
-        }
-      }
-      if (depth > get_depth()) {
-        return false; // no next leaf (end)
-      }
-      // step to the right sibling at that level, then descend leftmost to the leaf
-      get_internal(depth).pos++;
-      while (depth > 2) {
-        auto &internal = get_internal(depth);
-        auto it = get_internal(depth).node->iter_idx(internal.pos);
-        auto child = get_internal(depth).node->template get_child_sync<
-          internal_node_t>(c.trans, c.cache, internal.pos, it.get_key());
-        if (!is_valid_child_ptr(child.get())) {
-          return false;
-        }
-        depth--;
-        get_internal(depth).node = child;
-        get_internal(depth).pos = 0;
-      }
-      assert(depth == 2);
-      // position `leaf` at the next leaf
-      auto &parent = get_internal(depth);
-      auto it = parent.node->begin();
-      auto child = parent.node->template get_child_sync<
-        leaf_node_t>(c.trans, c.cache, parent.pos, it.get_key());
-      if (!is_valid_child_ptr(child.get())) {
-        return false;
-      }
-      leaf.node = child;
-      leaf.pos = 0;
-      return true;
-    }
-
     /**
      * Called when leaf.pos has advanced past the end of the current leaf
      * (at_boundary() == true).  Walks up the internal stack to find the
@@ -696,13 +622,6 @@ public:
   }
 
   /**
-   * Synchronous variant - asserts the root node is already in cache.
-   */
-  auto get_root_node_sync(op_context_t c) const {
-    return get_phy_tree_root_node_sync<self_type>(root_block, c);
-  }
-
-  /**
    * mkfs
    * Create the initial (empty) tree during mkfs.  Allocates a single empty
    * leaf node as the root, links it to the RootBlock, and returns the
@@ -775,73 +694,6 @@ public:
     auto it = leaf->iter_idx(pos);
     assert(it.get_key() == key);
     return new cursor_t(c, leaf, leaf->modifications, key, it.get_val(), pos);
-  }
-
-  /**
-   * Synchronous lower_bound - requires all nodes along the path to already
-   * be in cache.  Used on hot paths where blocking is unacceptable (e.g.
-   * transaction commit).  Walks from root to leaf using get_child_sync().
-   */
-  iterator lower_bound_sync(
-    op_context_t c,
-    node_key_t addr)
-  {
-    LOG_PREFIX(FixedKVBtree::lower_bound_sync);
-    auto depth = get_root().get_depth();
-#ifndef NDEBUG
-    iterator iter{depth, iterator::state_t::FULL};
-#else
-    iterator iter{depth};
-#endif
-    auto root_node = get_root_node_sync(c);
-    if (depth == 1) {
-      iter.leaf.node = root_node->template cast<leaf_node_t>();
-      auto &root_entry = iter.leaf;
-      auto riter = root_entry.node->lower_bound(addr);
-      SUBDEBUGT(
-        seastore_fixedkv_tree,
-        "leaf addr {}, got ret offset {}, size {}, end {}",
-        c.trans,
-        addr,
-        riter.get_offset(),
-        root_entry.node->get_size(),
-        riter == root_entry.node->end());
-      root_entry.pos = riter->get_offset();
-      return iter;
-    }
-    iter.get_internal(depth).node =
-      root_node->template cast<internal_node_t>();
-    assert(depth > 1);
-    while (depth > 1) {
-      auto &entry = iter.get_internal(depth);
-      auto riter = entry.node->upper_bound(addr);
-      assert(riter != entry.node->begin());
-      --riter;
-      entry.pos = riter.get_offset();
-      depth--;
-      if (depth > 1) {
-        auto child = entry.node->template get_child_sync<internal_node_t>(
-          c.trans, c.cache, entry.pos, riter.get_key());
-        ceph_assert(is_valid_child_ptr(child.get()));
-        iter.get_internal(depth).node = child;
-      } else {
-        auto child = entry.node->template get_child_sync<leaf_node_t>(
-          c.trans, c.cache, entry.pos, riter.get_key());
-        ceph_assert(is_valid_child_ptr(child.get()));
-        iter.leaf.node = child;
-      }
-    }
-    auto it = iter.leaf.node->lower_bound(addr);
-    iter.leaf.pos = it->get_offset();
-    SUBDEBUGT(
-      seastore_fixedkv_tree,
-      "leaf addr {}, got ret offset {}, size {}, end {}",
-      c.trans,
-      addr,
-      it.get_offset(),
-      iter.leaf.node->get_size(),
-      it == iter.leaf.node->end());
-    return iter;
   }
 
   /**
@@ -1425,8 +1277,7 @@ public:
     op_context_t c,
     iterator iter,
     node_val_t val,
-    BaseChildNode<leaf_node_t, node_key_t> *child,
-    modification_t mod = modification_t::USER_MODIFY)
+    BaseChildNode<leaf_node_t, node_key_t> *child)
   {
     LOG_PREFIX(FixedKVBtree::update);
     SUBTRACET(
@@ -1434,9 +1285,6 @@ public:
       "update element at {}",
       c.trans,
       iter.is_end() ? min_max_t<node_key_t>::max : iter.get_key());
-    if (mod == modification_t::TRANS_SYNC) {
-      assert(child == nullptr);
-    }
     if (!iter.leaf.node->is_mutable()) {
       CachedExtentRef mut = c.cache.duplicate_for_write(
         c.trans, iter.leaf.node
@@ -1446,8 +1294,7 @@ public:
     ++(get_tree_stats<self_type>(c.trans).num_updates);
     iter.leaf.node->update(
       iter.leaf.node->iter_idx(iter.leaf.pos),
-      val,
-      mod);
+      val);
     if constexpr (std::is_base_of_v<
         ParentNode<leaf_node_t, node_key_t>, leaf_node_t>) {
       if (child) {

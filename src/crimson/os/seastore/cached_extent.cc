@@ -218,7 +218,6 @@ CachedExtent::is_viewable_by_trans(Transaction &t) {
   }
 
   // shared by multiple transactions
-  assert(t.is_in_read_set(this));
   assert(is_stable_ready());
 
   auto cmp = trans_spec_view_t::cmp_t();
@@ -472,8 +471,8 @@ void ExtentCommitter::commit_data() {
   auto &prior = *extent.prior_instance;
   prior.set_bptr(extent.get_bptr());
   prior.on_data_commit();
-  _share_prior_data_to_mutations();
-  _share_prior_data_to_pending_versions();
+  // Single writer: no other transaction can hold a pending copy of prior
+  // (mutation or pending version) whose data would need refreshing.
 }
 
 void ExtentCommitter::commit_state() {
@@ -503,121 +502,11 @@ void ExtentCommitter::commit_state() {
   extent.on_state_commit();
 }
 
-void ExtentCommitter::maybe_sync_copied_lba_key() {
-  ceph_assert(extent.is_logical());
-  auto &lextent = static_cast<LogicalChildNode&>(extent);
-  auto &prior = *extent.prior_instance;
-  for (auto &item : prior.read_transactions) {
-    switch (t.get_src()) {
-    case transaction_type_t::PROMOTE:
-      {
-        auto &shadow = *lextent.get_shadow();
-        item.t->maybe_sync_copied_lba_key(
-          lextent.get_laddr(),
-          lextent.get_paddr(),
-          shadow.get_paddr());
-        break;
-      }
-    case transaction_type_t::DEMOTE:
-      item.t->maybe_sync_copied_lba_key(
-        lextent.get_laddr(),
-        lextent.get_paddr(),
-        P_ADDR_NULL);
-      break;
-    default:
-      item.t->maybe_sync_copied_lba_key(
-        lextent.get_laddr(),
-        lextent.get_paddr(),
-        std::nullopt);
-      break;
-    }
-  }
-}
-
 void ExtentCommitter::commit_and_share_paddr() {
   auto &prior = *extent.prior_instance;
-  auto old_paddr = prior.get_prior_paddr_and_reset();
-  if (prior.get_paddr() == extent.get_paddr()) {
-    return;
-  }
-  if (prior.read_transactions.empty()) {
+  std::ignore = prior.get_prior_paddr_and_reset();
+  if (prior.get_paddr() != extent.get_paddr()) {
     prior.set_paddr(extent.get_paddr());
-    return;
-  }
-  for (auto &item : prior.read_transactions) {
-    auto [removed, retired] = item.t->pre_stable_extent_paddr_mod(item);
-    if (prior.get_paddr() != extent.get_paddr()) {
-      prior.set_paddr(extent.get_paddr());
-    }
-    item.t->post_stable_extent_paddr_mod(item, retired);
-    item.t->maybe_update_pending_paddr(
-      old_paddr, extent.get_paddr(), extent.get_length());
-  }
-}
-
-void ExtentCommitter::_share_prior_data_to_mutations() {
-  LOG_PREFIX(ExtentCommitter::_share_prior_data_to_mutations);
-  ceph_assert(is_lba_backref_node(extent.get_type()));
-  auto &prior = *extent.prior_instance;
-  for (auto &mext : prior.mutation_pending_extents) {
-    if (extent.get_type() == extent_types_t::LADDR_LEAF) {
-      // LBA leaf mappings contains other fields than just pladdr, which
-      // may also be modified. In this case, we can just overwrite the
-      // whole contents of the leaf node and reapply deltas like what
-      // we do for internal nodes.
-      auto &mextent = static_cast<lba::LBALeafNode&>(mext);
-      auto &me = static_cast<lba::LBALeafNode&>(extent);
-      TRACE("{} -> {}", me, mextent);
-      auto iter = me.begin();
-      auto merged = me.merge_content_to(t, mextent, iter);
-      mextent.adjust_delta([&](auto &buf) {
-        if (buf.op == lba::LBALeafNode::delta_t::op_t::UPDATE ||
-            // only remapping extents can create a delta with op
-            // INSERT and the corresponding mapping in "merged"
-            buf.op == lba::LBALeafNode::delta_t::op_t::INSERT) {
-          auto it = merged.find(buf.key);
-          if (it != merged.end()) {
-            TRACE("{} -> {}, {} -> {}",
-              me, mextent, (pladdr_t)buf.val.pladdr, it->second);
-            buf.val = lba::lba_map_val_le_t(it->second);
-          }
-        }
-      });
-      // "me" is the actual prev of mextent, so before mextent enters
-      // the "prepare" pipeline phase, its last_committed_crc should be
-      // that of "me"'s
-      mextent.set_last_committed_crc(me.get_last_committed_crc());
-    } else {
-      auto &mextent = static_cast<CachedExtent&>(mext);
-      TRACE("{} -> {}", extent, mextent);
-      extent.get_bptr().copy_out(
-        0, extent.get_length(), mextent.get_bptr().c_str());
-      mextent.on_data_commit();
-      mextent.reapply_delta();
-      mextent.set_last_committed_crc(extent.get_last_committed_crc());
-    }
-  }
-}
-
-void ExtentCommitter::_share_prior_data_to_pending_versions()
-{
-  ceph_assert(is_lba_backref_node(extent.get_type()));
-  auto &prior = *extent.prior_instance;
-  switch (extent.get_type()) {
-  case extent_types_t::LADDR_LEAF:
-    static_cast<lba::LBALeafNode&>(
-      prior).merge_content_to_pending_versions(t);
-    break;
-  case extent_types_t::LADDR_INTERNAL:
-    static_cast<lba::LBAInternalNode&>(prior
-      ).merge_content_to_pending_versions(t);
-    break;
-  case extent_types_t::BACKREF_INTERNAL:
-    static_cast<backref::BackrefInternalNode&>(prior
-      ).merge_content_to_pending_versions(t);
-    break;
-  default:
-    break;
   }
 }
 
@@ -634,21 +523,11 @@ void ExtentCommitter::commit_shadow_demote(Transaction &t) {
   LOG_PREFIX(ExtentCommitter::commit_shadow_demote);
   assert(t.get_src() == transaction_type_t::DEMOTE);
   auto &prior = *extent.prior_instance->template cast<LogicalChildNode>();
-  auto shadow = prior.get_shadow();
+  [[maybe_unused]] auto shadow = prior.get_shadow();
   assert(shadow);
-  for (auto &trans_view : prior.retired_transactions) {
-    assert(trans_view.t != nullptr);
-    auto view_tid = trans_view.t->get_trans_id();
-    if (view_tid == t.get_trans_id()) {
-      continue;
-    }
-    TRACET("removing shadow {} from retired_set of t.{}", t, *shadow, view_tid);
-    [[maybe_unused]] bool removed =
-      trans_view.t->remove_from_retired_set(*shadow);
-    assert(removed);
-    trans_view.t->remove_shadow_from_write_set(
-      shadow->get_paddr(), shadow->get_length());
-  }
+  // Other transactions that retired prior would need their view of the
+  // shadow fixed up; with a single writer there are none.
+  TRACET("demote shadow {}", t, *shadow);
 }
 
 void ExtentCommitter::commit_shadow_promote(Transaction &t) {
@@ -662,15 +541,9 @@ void ExtentCommitter::commit_shadow_promote(Transaction &t) {
   assert(shadow);
   assert(shadow->is_shadow_extent());
   lprior.set_shadow(shadow);
-  for (auto &trans_view : lprior.retired_transactions) {
-    assert(trans_view.t != nullptr);
-    auto view_tid = trans_view.t->get_trans_id();
-    if (view_tid == t.get_trans_id()) {
-      continue;
-    }
-    TRACET("adding shadow {} from t.{}", t, *shadow, view_tid);
-    trans_view.t->add_absent_to_retired_set(shadow);
-  }
+  // Other transactions that retired prior would need to retire the shadow
+  // too; with a single writer there are none.
+  TRACET("promote shadow {}", t, *shadow);
   lprior.set_pin_state(extent_pin_state_t::Fresh);
 }
 

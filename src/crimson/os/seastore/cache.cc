@@ -324,127 +324,7 @@ void Cache::register_metrics(store_index_t store_index)
      */
     auto effort_label = sm::label("effort");
 
-    // invalidated efforts
     using namespace std::literals::string_view_literals;
-    const string_view invalidated_effort_names[] = {
-      "READ"sv,
-      "MUTATE"sv,
-      "RETIRE"sv,
-      "FRESH"sv,
-      "FRESH_OOL_WRITTEN"sv,
-    };
-    for (auto& [src, src_label] : labels_by_src) {
-      auto& efforts = get_by_src(stats.invalidated_efforts_by_src, src);
-      for (auto& [ext, ext_label] : labels_by_ext) {
-        auto& counter = get_by_ext(efforts.num_trans_invalidated, ext);
-        std::vector<sm::label_instance> merged_labels = src_label;
-        merged_labels.insert(merged_labels.end(), ext_label.begin(), ext_label.end());
-        metrics.add_group(
-          "cache",
-          {
-            sm::make_counter(
-              "trans_invalidated_by_extent",
-              counter,
-              sm::description("total number of transactions invalidated by extents"),
-              merged_labels
-            ),
-          }
-        );
-      }
-
-      if (src == src_t::READ) {
-        // read transaction won't have non-read efforts
-        auto read_effort_label = effort_label("READ");
-        std::vector<sm::label_instance> merged_labels = src_label;
-        merged_labels.push_back(read_effort_label);
-        metrics.add_group(
-          "cache",
-          {
-            sm::make_counter(
-              "invalidated_extents",
-              efforts.read.num,
-              sm::description("extents of invalidated transactions"),
-              merged_labels
-            ),
-            sm::make_counter(
-              "invalidated_extent_bytes",
-              efforts.read.bytes,
-              sm::description("extent bytes of invalidated transactions"),
-              merged_labels
-            ),
-          }
-        );
-        continue;
-      }
-
-      // non READ invalidated efforts
-      for (auto& effort_name : invalidated_effort_names) {
-        auto& effort = [&effort_name, &efforts]() -> io_stat_t& {
-          if (effort_name == "READ") {
-            return efforts.read;
-          } else if (effort_name == "MUTATE") {
-            return efforts.mutate;
-          } else if (effort_name == "RETIRE") {
-            return efforts.retire;
-          } else if (effort_name == "FRESH") {
-            return efforts.fresh;
-          } else {
-            assert(effort_name == "FRESH_OOL_WRITTEN");
-            return efforts.fresh_ool_written;
-          }
-        }();
-        std::vector<sm::label_instance> merged_labels = src_label;
-        merged_labels.push_back(effort_label(effort_name));
-        metrics.add_group(
-          "cache",
-          {
-            sm::make_counter(
-              "invalidated_extents",
-              effort.num,
-              sm::description("extents of invalidated transactions"),
-              merged_labels
-            ),
-            sm::make_counter(
-              "invalidated_extent_bytes",
-              effort.bytes,
-              sm::description("extent bytes of invalidated transactions"),
-              merged_labels
-            ),
-          }
-        );
-      } // effort_name
-
-      metrics.add_group(
-        "cache",
-        {
-          sm::make_counter(
-            "trans_invalidated",
-            efforts.total_trans_invalidated,
-            sm::description("total number of transactions invalidated"),
-            {src_label}
-          ),
-          sm::make_counter(
-            "invalidated_delta_bytes",
-            efforts.mutate_delta_bytes,
-            sm::description("delta bytes of invalidated transactions"),
-            {src_label}
-          ),
-          sm::make_counter(
-            "invalidated_ool_records",
-            efforts.num_ool_records,
-            sm::description("number of ool-records from invalidated transactions"),
-            {src_label}
-          ),
-          sm::make_counter(
-            "invalidated_ool_record_bytes",
-            efforts.ool_record_bytes,
-            sm::description("bytes of ool-record from invalidated transactions"),
-            {src_label}
-          ),
-        }
-      );
-    } // src
-
     // committed efforts
     const string_view committed_effort_names[] = {
       "READ"sv,
@@ -639,8 +519,7 @@ void Cache::register_metrics(store_index_t store_index)
       const sm::label_instance& tree_label,
       uint64_t& tree_depth,
       int64_t& tree_extents_num,
-      counter_by_src_t<tree_efforts_t>& committed_tree_efforts,
-      counter_by_src_t<tree_efforts_t>& invalidated_tree_efforts) {
+      counter_by_src_t<tree_efforts_t>& committed_tree_efforts) {
     metrics.add_group(
       "cache",
       {
@@ -670,7 +549,6 @@ void Cache::register_metrics(store_index_t store_index)
         continue;
       }
       auto& committed_efforts = get_by_src(committed_tree_efforts, src);
-      auto& invalidated_efforts = get_by_src(invalidated_tree_efforts, src);
       std::vector<sm::label_instance> merged_labels = {tree_label}; // Copy src_label
       merged_labels.insert(merged_labels.end(), src_label.begin(), src_label.end());
       metrics.add_group(
@@ -694,24 +572,6 @@ void Cache::register_metrics(store_index_t store_index)
             sm::description("total number of committed update operations"),
             merged_labels
           ),
-          sm::make_counter(
-            "tree_inserts_invalidated",
-            invalidated_efforts.num_inserts,
-            sm::description("total number of invalidated insert operations"),
-            merged_labels
-          ),
-          sm::make_counter(
-            "tree_erases_invalidated",
-            invalidated_efforts.num_erases,
-            sm::description("total number of invalidated erase operations"),
-            merged_labels
-          ),
-          sm::make_counter(
-            "tree_updates_invalidated",
-            invalidated_efforts.num_updates,
-            sm::description("total number of invalidated update operations"),
-            merged_labels
-          ),
         }
       );
     }
@@ -720,92 +580,22 @@ void Cache::register_metrics(store_index_t store_index)
       onode_label,
       stats.onode_tree_depth,
       stats.onode_tree_extents_num,
-      stats.committed_onode_tree_efforts,
-      stats.invalidated_onode_tree_efforts);
+      stats.committed_onode_tree_efforts);
   register_tree_metrics(
       omap_label,
       stats.omap_tree_depth,
       stats.omap_tree_extents_num,
-      stats.committed_omap_tree_efforts,
-      stats.invalidated_omap_tree_efforts);
+      stats.committed_omap_tree_efforts);
   register_tree_metrics(
       lba_label,
       stats.lba_tree_depth,
       stats.lba_tree_extents_num,
-      stats.committed_lba_tree_efforts,
-      stats.invalidated_lba_tree_efforts);
+      stats.committed_lba_tree_efforts);
   register_tree_metrics(
       backref_label,
       stats.backref_tree_depth,
       stats.backref_tree_extents_num,
-      stats.committed_backref_tree_efforts,
-      stats.invalidated_backref_tree_efforts);
-
-  /**
-   * conflict combinations
-   */
-  auto srcs_label = sm::label("srcs");
-  auto num_srcs = static_cast<std::size_t>(Transaction::src_t::MAX);
-  std::size_t srcs_index = 0;
-  for (uint8_t src2_int = 0; src2_int < num_srcs; ++src2_int) {
-    auto src2 = static_cast<Transaction::src_t>(src2_int);
-    for (uint8_t src1_int = src2_int; src1_int < num_srcs; ++src1_int) {
-      ++srcs_index;
-      auto src1 = static_cast<Transaction::src_t>(src1_int);
-      // impossible combinations
-      // should be consistent with checks in account_conflict()
-      if ((src1 == Transaction::src_t::READ &&
-           src2 == Transaction::src_t::READ) ||
-          (src1 == Transaction::src_t::TRIM_DIRTY &&
-           src2 == Transaction::src_t::TRIM_DIRTY) ||
-          (src1 == Transaction::src_t::CLEANER_MAIN &&
-           src2 == Transaction::src_t::CLEANER_MAIN) ||
-          (src1 == Transaction::src_t::CLEANER_COLD &&
-           src2 == Transaction::src_t::CLEANER_COLD) ||
-          (src1 == Transaction::src_t::PROMOTE &&
-           src2 == Transaction::src_t::PROMOTE) ||
-          (src1 == Transaction::src_t::DEMOTE &&
-           src2 == Transaction::src_t::DEMOTE) ||
-          (src1 == Transaction::src_t::TRIM_ALLOC &&
-           src2 == Transaction::src_t::TRIM_ALLOC)) {
-        continue;
-      }
-      std::ostringstream oss;
-      oss << src1 << "," << src2;
-      metrics.add_group(
-        "cache",
-        {
-          sm::make_counter(
-            "trans_srcs_invalidated",
-            stats.trans_conflicts_by_srcs[srcs_index - 1],
-            sm::description("total number conflicted transactions by src pair"),
-            {srcs_label(oss.str()),
-             sm::label_instance("shard_store_index", std::to_string(store_index))}
-          ),
-        }
-      );
-    }
-  }
-  assert(srcs_index == NUM_SRC_COMB);
-  srcs_index = 0;
-  for (uint8_t src_int = 0; src_int < num_srcs; ++src_int) {
-    ++srcs_index;
-    auto src = static_cast<Transaction::src_t>(src_int);
-    std::ostringstream oss;
-    oss << "UNKNOWN," << src;
-    metrics.add_group(
-      "cache",
-      {
-        sm::make_counter(
-          "trans_srcs_invalidated",
-          stats.trans_conflicts_by_unknown[srcs_index - 1],
-          sm::description("total number conflicted transactions by src pair"),
-          {srcs_label(oss.str()),
-           sm::label_instance("shard_store_index", std::to_string(store_index))}
-        ),
-      }
-    );
-  }
+      stats.committed_backref_tree_efforts);
 
   /**
    * rewrite version
@@ -1113,164 +903,21 @@ void Cache::invalidate_extent(
     Transaction& t,
     CachedExtent& extent)
 {
-  if (!extent.may_conflict()) {
-    assert(extent.read_transactions.empty());
-    extent.set_invalid(t);
-    return;
-  }
-
-  LOG_PREFIX(Cache::invalidate_extent);
-  bool do_conflict_log = true;
-  std::vector<Transaction*> invalidated_trans;
-  for (auto &&i: extent.read_transactions) {
-    if (!i.t->conflicted) {
-      if (do_conflict_log) {
-        SUBDEBUGT(seastore_t, "conflict begin -- {}", t, extent);
-        do_conflict_log = false;
-      }
-      assert(!i.t->is_weak());
-      account_conflict(t.get_src(), i.t->get_src());
-      mark_transaction_conflicted(*i.t, extent);
-      invalidated_trans.emplace_back(i.t);
-    }
-  }
-  for (auto trans : invalidated_trans) {
-    trans->clear_read_set();
-    trans->invalidate_clear_write_set();
-    trans->retired_set.clear();
-    trans->views.clear();
-  }
+  // Under single-writer shard execution, conflict invalidation of concurrent
+  // transactions is eliminated. Extent is marked invalid directly.
   extent.set_invalid(t);
-}
-
-void Cache::mark_transaction_conflicted(
-  Transaction& t, CachedExtent& conflicting_extent)
-{
-  LOG_PREFIX(Cache::mark_transaction_conflicted);
-  SUBTRACET(seastore_t, "", t);
-  assert(!t.conflicted);
-  t.conflicted = true;
-  // count is only *sampled* for the user-MUTATE do_transaction path,
-  // where the transaction is reused across retries
-  ++t.num_replays;
-
-  auto& efforts = get_by_src(stats.invalidated_efforts_by_src,
-                             t.get_src());
-  ++efforts.total_trans_invalidated;
-
-  auto& counter = get_by_ext(efforts.num_trans_invalidated,
-                             conflicting_extent.get_type());
-  ++counter;
-
-  io_stat_t read_stat;
-  for (auto &i: t.read_set) {
-    read_stat.increment(i.ref->get_length());
-  }
-  efforts.read.increment_stat(read_stat);
-
-  if (t.get_src() != Transaction::src_t::READ) {
-    io_stat_t retire_stat;
-    for (auto &i: t.retired_set) {
-      retire_stat.increment(i.extent->get_length());
-    }
-    efforts.retire.increment_stat(retire_stat);
-
-    auto& fresh_stat = t.get_fresh_block_stats();
-    efforts.fresh.increment_stat(fresh_stat);
-
-    io_stat_t delta_stat;
-    for (auto &i: t.mutated_block_list) {
-      if (!i->is_valid()) {
-        continue;
-      }
-      efforts.mutate.increment(i->get_length());
-      delta_stat.increment(i->get_delta().length());
-      i->trans_view_hook.unlink();
-    }
-    efforts.mutate_delta_bytes += delta_stat.bytes;
-
-    if (auto pending = t.get_pending_ool(); pending) {
-      // Extents of the in-flight write are freed in do_write().finally() on
-      // completion; the rest (other tiers, or already written) are not under
-      // I/O and are freed now.
-      pending->is_conflicted = true;
-      for (auto &e : t.pre_alloc_list) {
-        if (std::find(pending->pending_extents.begin(),
-                      pending->pending_extents.end(),
-                      e) != pending->pending_extents.end()) {
-          pending->deferred_frees.push_back(e);
-          epm.account_conflict_pending_free(e->get_paddr(), e->get_length());
-        } else {
-          epm.mark_space_free(e->get_paddr(), e->get_length());
-        }
-      }
-    } else {
-      for (auto &i: t.pre_alloc_list) {
-	epm.mark_space_free(i->get_paddr(), i->get_length());
-      }
-    }
-
-    auto& ool_stats = t.get_ool_write_stats();
-    efforts.fresh_ool_written.increment_stat(ool_stats.extents);
-    efforts.num_ool_records += ool_stats.num_records;
-    auto ool_record_bytes = (ool_stats.md_bytes + ool_stats.get_data_bytes());
-    efforts.ool_record_bytes += ool_record_bytes;
-
-    if (is_background_transaction(t.get_src())) {
-      // CLEANER transaction won't contain any onode/omap tree operations
-      assert(t.onode_tree_stats.is_clear());
-      assert(t.omap_tree_stats.is_clear());
-    } else {
-      get_by_src(stats.invalidated_onode_tree_efforts, t.get_src()
-          ).increment(t.onode_tree_stats);
-      get_by_src(stats.invalidated_omap_tree_efforts, t.get_src()
-          ).increment(t.omap_tree_stats);
-    }
-
-    get_by_src(stats.invalidated_lba_tree_efforts, t.get_src()
-        ).increment(t.lba_tree_stats);
-    get_by_src(stats.invalidated_backref_tree_efforts, t.get_src()
-        ).increment(t.backref_tree_stats);
-
-    SUBDEBUGT(seastore_t,
-        "discard {} read, {} fresh, {} delta, {} retire, {}({}B) ool-records",
-        t,
-        read_stat,
-        fresh_stat,
-        delta_stat,
-        retire_stat,
-        ool_stats.num_records,
-        ool_record_bytes);
-  } else {
-    // read transaction won't have non-read efforts
-    assert(t.retired_set.empty());
-    assert(t.get_fresh_block_stats().is_clear());
-    assert(t.mutated_block_list.empty());
-    assert(t.get_ool_write_stats().is_clear());
-    assert(t.onode_tree_stats.is_clear());
-    assert(t.omap_tree_stats.is_clear());
-    assert(t.lba_tree_stats.is_clear());
-    assert(t.backref_tree_stats.is_clear());
-    SUBDEBUGT(seastore_t, "discard {} read", t, read_stat);
-  }
 }
 
 void Cache::on_transaction_destruct(Transaction& t)
 {
   LOG_PREFIX(Cache::on_transaction_destruct);
   SUBTRACET(seastore_t, "", t);
-  if (t.get_src() == Transaction::src_t::READ &&
-      t.conflicted == false) {
-    io_stat_t read_stat;
-    for (auto &i: t.read_set) {
-      read_stat.increment(i.ref->get_length());
-    }
-    SUBDEBUGT(seastore_t, "done {} read", t, read_stat);
+  if (t.get_src() == Transaction::src_t::READ) {
+    SUBDEBUGT(seastore_t, "done read", t);
 
     if (!t.is_weak()) {
-      // exclude weak transaction as it is impossible to conflict
+      // exclude weak transactions, as before
       ++stats.success_read_efforts.num_trans;
-      stats.success_read_efforts.read.increment_stat(read_stat);
     }
 
     // read transaction won't have non-read efforts
@@ -1569,19 +1216,6 @@ record_t Cache::prepare_record(
   auto& efforts = get_by_src(stats.committed_efforts_by_src,
                              trans_src);
 
-  // Should be valid due to interruptible future
-  io_stat_t read_stat;
-  for (auto &i: t.read_set) {
-    if (!i.ref->is_valid()) {
-      SUBERRORT(seastore_t,
-          "read_set got invalid extent, aborting -- {}", t, *i.ref);
-      ceph_abort_msg("no invalid extent allowed in transactions' read_set");
-    }
-    get_by_ext(efforts.read_by_ext,
-               i.ref->get_type()).increment(i.ref->get_length());
-    read_stat.increment(i.ref->get_length());
-  }
-  t.clear_read_set();
   t.write_set.clear();
 
   record_t record(record_type_t::JOURNAL, trans_src);
@@ -2257,7 +1891,6 @@ void Cache::complete_commit(
         committer.commit_data();
       }
       if (i->is_logical()) {
-        committer.maybe_sync_copied_lba_key();
         if (t.get_src() == transaction_type_t::PROMOTE) {
           committer.commit_shadow_promote(t);
         }
@@ -2734,13 +2367,10 @@ Cache::get_next_dirty_extents_ret Cache::get_next_dirty_extents(
 	    ext->wait_io()
 	  ).then_interruptible([FNAME, this, ext, &t, &ret] {
 	    if (!ext->is_valid()) {
-	      ++(get_by_src(stats.trans_conflicts_by_unknown, t.get_src()));
-	      mark_transaction_conflicted(t, *ext);
 	      return;
 	    }
 
 	    DEBUGT("adding dirty extent {}", t, *ext);
-	    t.add_to_read_set(ext);
 	    if (is_root_type(ext->get_type())) {
 	      if (t.root) {
 		assert(&*t.root == &*ext);
@@ -2770,7 +2400,6 @@ Cache::get_root_ret Cache::get_root(Transaction &t)
   } else {
     DEBUGT("root not on t -- {}", t, *root);
     t.root = root;
-    t.add_to_read_set(root);
     return root->wait_io().then([root=root] {
       return get_root_iertr::make_ready_future<RootBlockRef>(
 	root);
@@ -2880,7 +2509,6 @@ Cache::_get_absent_extent_by_type(
     type);
   ++access_stats.load_absent;
   ++stats.access.load_absent;
-  t.add_to_read_set(CachedExtentRef(ret));
   touch_extent_fully(*ret, &t_src, t.get_cache_hint());
   return trans_intr::make_interruptible(
     read_extent(std::move(ret), 0, length, &t_src, pin_crc

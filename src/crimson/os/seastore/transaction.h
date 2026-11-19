@@ -100,15 +100,6 @@ struct btree_cursor_stats_t {
   }
 };
 
-struct rbm_pending_ool_t {
-  bool is_conflicted = false;
-  // Extents of the in-flight write, all on the issuing writer's tier.
-  std::vector<CachedExtentRef> pending_extents;
-  // On conflict, the pre-allocated extents among pending_extents; freed by
-  // the writer once the write completes.
-  std::vector<CachedExtentRef> deferred_frees;
-};
-
 /**
  * Transaction
  *
@@ -116,7 +107,7 @@ struct rbm_pending_ool_t {
  *
  * Transaction log levels:
  * seastore_t
- * - DEBUG: transaction create, conflict, commit events
+ * - DEBUG: transaction create, commit events
  * - TRACE: DEBUG details
  * - seastore_cache logs
  */
@@ -141,19 +132,19 @@ public:
 
   void add_absent_to_retired_set(CachedExtentRef ref) {
     assert(ref->get_paddr().is_absolute());
-    bool added = do_add_to_read_set(ref);
-    ceph_assert(added);
     add_present_to_retired_set(ref);
   }
 
-  using extent_cmp_t = read_set_item_t<Transaction>::extent_cmp_t;
   void add_present_to_retired_set(CachedExtentRef ref) {
     assert(ref->get_paddr().is_real_location());
     assert(!is_weak());
 #ifndef NDEBUG
-    auto [result, ext] = do_get_extent(ref->get_paddr());
-    assert(result == get_extent_ret::PRESENT);
-    assert(ext == ref);
+    // stable extents are not tracked by the transaction (no read_set)
+    if (!ref->is_stable()) {
+      auto [result, ext] = do_get_extent(ref->get_paddr());
+      assert(result == get_extent_ret::PRESENT);
+      assert(ext == ref);
+    }
 #endif
     if (ref->is_exist_clean() ||
 	ref->is_exist_mutation_pending()) {
@@ -168,7 +159,6 @@ public:
       write_set.erase(*ref);
       assert(ref->prior_instance);
       retired_set.emplace(ref->prior_instance, *this);
-      assert(read_set.count(ref->prior_instance->get_paddr(), extent_cmp_t{}));
       ref->reset_prior_instance();
     } else {
       ceph_assert(ref->is_stable());
@@ -178,45 +168,6 @@ public:
       // which is what we want.
       retired_set.emplace(ref, *this);
     }
-  }
-
-  // Returns true if added, false if already added or weak
-  struct maybe_add_readset_ret {
-    bool added;
-    bool is_paddr_known;
-  };
-  maybe_add_readset_ret maybe_add_to_read_set(CachedExtentRef ref) {
-    assert(ref->is_stable());
-    assert(ref->get_paddr().is_absolute()
-           || ref->get_paddr().is_record_relative());
-    if (is_weak()) {
-      return {false, true /* meaningless */};
-    }
-    if (ref->get_paddr().is_absolute()) {
-      // paddr is known
-      bool added = do_add_to_read_set(ref);
-      return {added, true};
-    } else {
-      // paddr is unknown until wait_io() finished
-      // to call maybe_add_to_read_set_step_2(ref)
-      assert(ref->is_pending_io());
-      ceph_assert(ref->get_paddr().is_record_relative());
-      bool added = maybe_add_to_read_set_step_1(ref);
-      return {added, false};
-    }
-  }
-
-  bool is_in_read_set(CachedExtentRef extent) const {
-    return lookup_trans_from_read_extent(extent).first;
-  }
-
-  void add_to_read_set(CachedExtentRef ref) {
-    if (is_weak()) {
-      return;
-    }
-
-    bool added = do_add_to_read_set(ref);
-    ceph_assert(added);
   }
 
   void add_fresh_extent(
@@ -306,8 +257,6 @@ public:
     ceph_assert(!is_weak());
     assert(ref->get_paddr().is_absolute() ||
            ref->get_paddr().is_root());
-    assert(ref->is_exist_mutation_pending() ||
-	   read_set.count(ref->prior_instance->get_paddr(), extent_cmp_t{}));
     mutated_block_list.push_back(ref);
     if (ref->is_mutation_pending()) {
       write_set.insert(*ref);
@@ -371,53 +320,6 @@ public:
     }
   }
 
-  bool remove_from_retired_set(CachedExtent &ext) {
-    auto it = retired_set.find(ext.get_paddr());
-    if (it == retired_set.end()) {
-      return false;
-    }
-    auto &extent = it->extent;
-    if (extent->get_paddr() != ext.get_paddr()) {
-      return false;
-    } else {
-      assert(ext.get_length() == extent->get_length());
-      retired_set.erase(it);
-      return true;
-    }
-  }
-
-  std::pair<bool, bool> pre_stable_extent_paddr_mod(
-    read_set_item_t<Transaction> &item)
-  {
-    LOG_PREFIX(Transaction::pre_stable_extent_paddr_mod);
-    SUBTRACET(seastore_t, "{}", *this, *item.ref);
-#ifndef NDEBUG
-    auto [existed, it] = lookup_trans_from_read_extent(item.ref);
-    assert(existed);
-    assert(item.ref.get() == it->ref.get());
-    assert(item.t = it->t);
-#endif
-
-    if (!item.is_extent_attached_to_trans()) {
-      return {false, false};
-    }
-    auto &extent = *item.ref;
-    read_set.erase(read_extent_set_t<Transaction>::s_iterator_to(item));
-    auto where1 = retired_set.find(extent.get_paddr());
-    bool retired = (where1 != retired_set.end());
-    if (where1 != retired_set.end()) {
-      retired_set.erase(where1);
-    }
-    return {true, retired};
-  }
-  void post_stable_extent_paddr_mod(
-    read_set_item_t<Transaction> &item,
-    bool retired) {
-    read_set.insert(item);
-    if (retired) {
-      retired_set.emplace(item.ref, *this);
-    }
-  }
   void maybe_update_pending_paddr(
     const paddr_t &old_paddr,
     const paddr_t &new_paddr,
@@ -455,24 +357,6 @@ public:
       }
       mextent.set_paddr(new_paddr + off);
       write_set.insert(mextent);
-    }
-  }
-  void remove_shadow_from_write_set(
-    const paddr_t &shadow_paddr, extent_len_t len) {
-    std::vector<CachedExtent*> exts;
-    for (auto [bottom, top] = write_set.get_overlap(shadow_paddr, len);
-         bottom != top;
-         bottom++) {
-      auto &mextent = *bottom;
-      if (mextent.is_initial_pending()) {
-        assert(!mextent.is_shadow_extent());
-        continue;
-      }
-      assert(mextent.is_shadow_extent() && mextent.is_exist_clean());
-      exts.emplace_back(&mextent);
-    }
-    for (auto i :exts) {
-      write_set.erase(*i);
     }
   }
 
@@ -596,7 +480,6 @@ public:
     root.reset();
     offset = 0;
     delayed_temp_offset = 0;
-    clear_read_set();
     fresh_backref_extents = 0;
     invalidate_clear_write_set();
     mutated_block_list.clear();
@@ -608,7 +491,6 @@ public:
     ool_block_list.clear();
     inplace_ool_block_list.clear();
     pre_alloc_list.clear();
-    pending_ool = nullptr;
     pre_inplace_rewrite_list.clear();
     retired_set.clear();
     existing_block_list.clear();
@@ -620,15 +502,13 @@ public:
     ool_write_stats = {};
     rewrite_stats = {};
     conflicted = false;
-    force_rewrite_conflict = false;
+    force_rewrite_invalidate = false;
     assert(backref_entries.empty());
     if (!has_reset) {
       has_reset = true;
     }
     get_handle().exit();
     views.clear();
-    copied_lba_keys.clear();
-    update_copied_lba_key = nullptr;
     touched_prefix.clear();
   }
 
@@ -730,20 +610,6 @@ public:
     return static_cast<T&>(*view);
   }
 
-  // Paired with clear_pending_ool() when the OOL write completes.
-  void set_pending_ool(seastar::lw_shared_ptr<rbm_pending_ool_t> ptr) {
-    assert(!pending_ool);
-    pending_ool = ptr;
-  }
-
-  void clear_pending_ool() {
-    pending_ool = nullptr;
-  }
-
-  seastar::lw_shared_ptr<rbm_pending_ool_t> get_pending_ool() {
-    return pending_ool;
-  }
-
   const auto& get_pre_alloc_list() {
     return pre_alloc_list;
   }
@@ -762,39 +628,10 @@ public:
 
   btree_cursor_stats_t cursor_stats;
 
-  bool force_rewrite_conflict = false;
+  /// Commit rewritten extents by replacing and invalidating their priors
+  /// instead of the no-conflict publish, see should_use_no_conflict_publish().
+  bool force_rewrite_invalidate = false;
 
-  struct lmapping_t {
-    laddr_t dest = L_ADDR_NULL;
-    extent_len_t len = 0;
-  };
-  using update_copied_lba_key_func_t =
-    std::function<void (laddr_t, paddr_t,
-                  extent_len_t, std::optional<paddr_t>)>;
-  void new_lba_key_copied(
-    laddr_t src,
-    laddr_t dest,
-    extent_len_t len,
-    update_copied_lba_key_func_t &&func) {
-    copied_lba_keys.emplace(src, lmapping_t{dest, len});
-    if (!update_copied_lba_key) {
-      update_copied_lba_key = std::move(func);
-    }
-  }
-  void maybe_sync_copied_lba_key(
-    laddr_t laddr, paddr_t paddr, std::optional<paddr_t> shadow) {
-    if (likely(copied_lba_keys.empty())) {
-      return;
-    }
-    assert(update_copied_lba_key);
-    auto it = copied_lba_keys.find(laddr);
-    if (it == copied_lba_keys.end()) {
-      return;
-    }
-    laddr_t key = it->second.dest;
-    extent_len_t len = it->second.len;
-    update_copied_lba_key(key, paddr, len, shadow);
-  }
   RootBlockRef peek_root() {
     return root;
   }
@@ -802,18 +639,8 @@ private:
   friend class Cache;
   friend Ref make_test_transaction();
 
-  void clear_read_set() {
-    read_items.clear();
-    assert(read_set.empty());
-    // Automatically unlink this transaction from CachedExtent::read_transactions
-  }
-
   std::pair<get_extent_ret, CachedExtentRef> do_get_extent(paddr_t addr) {
     LOG_PREFIX(Transaction::do_get_extent);
-    // it's possible that both write_set and retired_set contain
-    // this addr at the same time when addr is absolute and the
-    // corresponding extent is used to map existing extent on disk.
-    // So search write_set first.
     if (auto iter = write_set.find_offset(addr);
 	iter != write_set.end()) {
       auto ret = CachedExtentRef(&*iter);
@@ -823,92 +650,9 @@ private:
       return {get_extent_ret::PRESENT, ret};
     } else if (retired_set.count(addr)) {
       return {get_extent_ret::RETIRED, nullptr};
-    } else if (
-      auto iter = read_set.find(addr, extent_cmp_t{});
-      iter != read_set.end()) {
-      auto ret = iter->ref;
-      SUBTRACET(seastore_cache, "{} is present in read_set -- {}",
-                *this, addr, *ret);
-      return {get_extent_ret::PRESENT, ret};
     } else {
       return {get_extent_ret::ABSENT, nullptr};
     }
-  }
-
-  std::pair<bool, read_trans_set_t<Transaction>::iterator>
-  lookup_trans_from_read_extent(CachedExtentRef ref) const {
-    assert(ref->is_valid());
-    assert(!is_weak());
-    auto it = ref->read_transactions.lower_bound(
-      this, read_set_item_t<Transaction>::trans_cmp_t());
-    bool exists =
-      (it != ref->read_transactions.end() && it->t == this);
-    return std::make_pair(exists, it);
-  }
-
-  bool maybe_add_to_read_set_step_1(CachedExtentRef ref) {
-    assert(!is_weak());
-    assert(ref->is_stable());
-    auto [exists, it] = lookup_trans_from_read_extent(ref);
-    if (exists) {
-      // not added
-      return false;
-    }
-
-    // step 1: create read_item and attach transaction to extent
-    // so that transaction invalidation can populate
-    assert(!read_set.count(ref->get_paddr(), extent_cmp_t{}));
-    read_items.emplace_back(this, ref);
-    ref->read_transactions.insert_before(
-      it, read_items.back());
-
-    // added
-    return true;
-  }
-
-  void maybe_add_to_read_set_step_2(CachedExtentRef ref) {
-    // paddr must be known for read_set
-    assert(ref->is_stable_ready());
-    ceph_assert(ref->get_paddr().is_absolute());
-    if (is_weak()) {
-      return;
-    }
-    auto [exists, it] = lookup_trans_from_read_extent(ref);
-    // step 1 must be complete
-    assert(exists);
-    // step 2 may be reordered after wait_io(),
-    // so the extent may already be attached to the transaction.
-    if (it->is_extent_attached_to_trans()) {
-      assert(read_set.count(ref->get_paddr(), extent_cmp_t{}));
-      return;
-    }
-
-    // step 2: attach extent to transaction to become visible
-    assert(!read_set.count(ref->get_paddr(), extent_cmp_t{}));
-    [[maybe_unused]] auto [_, inserted] = read_set.insert(*it);
-    assert(inserted);
-  }
-
-  bool do_add_to_read_set(CachedExtentRef ref) {
-    assert(!is_weak());
-    assert(ref->is_stable());
-    // paddr must be known for read_set
-    assert(ref->get_paddr().is_absolute()
-           || ref->get_paddr().is_root());
-
-    if (!maybe_add_to_read_set_step_1(ref)) {
-      // step 2 must be complete if exist
-      assert(read_set.count(ref->get_paddr(), extent_cmp_t{}));
-      // not added
-      return false;
-    }
-
-    // step 2: attach extent to transaction to become visible
-    [[maybe_unused]] auto [_, inserted] = read_set.insert(read_items.back());
-    assert(inserted);
-
-    // added
-    return true;
   }
 
   void set_backref_entries(backref_entry_refs_t&& entries) {
@@ -921,8 +665,7 @@ private:
   }
 
   /**
-   * If set, *this may not be used to perform writes and will not provide
-   * consistentency allowing operations using to avoid maintaining a read_set.
+   * If set, *this may not be used to perform writes.
    */
   const bool weak;
 
@@ -930,16 +673,6 @@ private:
 
   device_off_t offset = 0; ///< relative offset of next block
   device_off_t delayed_temp_offset = 0;
-
-  /**
-   * read_set
-   *
-   * Holds a reference (with a refcount) to every extent read via *this.
-   * Submitting a transaction mutating any contained extent/addr will
-   * invalidate *this.
-   */
-  read_extent_set_t<Transaction> read_set; ///< set of extents read by paddr
-  std::list<read_set_item_t<Transaction>> read_items;
 
   uint64_t fresh_backref_extents = 0; // counter of new backref extents
 
@@ -1034,14 +767,11 @@ private:
 
   transaction_id_t trans_id = TRANS_ID_NULL;
 
-  seastar::lw_shared_ptr<rbm_pending_ool_t> pending_ool;
 
   backref_entry_refs_t backref_entries;
 
   cache_hint_t cache_hint = CACHE_HINT_TOUCH;
 
-  std::map<laddr_t, lmapping_t> copied_lba_keys;
-  update_copied_lba_key_func_t update_copied_lba_key;
 };
 using TransactionRef = Transaction::Ref;
 
@@ -1061,27 +791,25 @@ inline TransactionRef make_test_transaction() {
  * should_use_no_conflict_publish()
  *
  * Returns true when this (transaction source, extent type) pair should take
- * the no-conflict publish path (i.e avoid invalidate-and-retry and use the
- * committer + visibility hand-off).
+ * the no-conflict publish path (keep the prior valid and hand the new
+ * paddr/state over to it via the committer) instead of replacing and
+ * invalidating the prior.
+ *
+ * With a single writer per shard no other writer can hold the prior; the
+ * point is the concurrent READ transactions: they keep using the prior
+ * instead of restarting (see Transaction::reader_is_stale()) every time a
+ * background rewrite moves an extent they read.
  *
  * Currently true for:
- *  - rewrite (background) transactions, for any non-root extent
- *
- *  To be expanded to:
- *  - user (txn_manager) transactions that mutate LBA nodes
- *  - Onode/Omap nodes
+ *  - rewrite (background) transactions, for any non-root extent, unless
+ *    force_rewrite_invalidate is set (structural LBA changes)
  */
 constexpr bool should_use_no_conflict_publish(const Transaction &t,
                                               extent_types_t ext_type) {
-  // keep classic handling for ROOT
   if (is_root_type(ext_type)) {
     return false;
   }
-
-  // TODO: Extend this as support grows (e.g. Onode/OMAP nodes).
-  //       is_user_transaction(txn_type) && is_lba_node(ext_type)
-
-  return !t.force_rewrite_conflict && is_rewrite_transaction(t.get_src());
+  return !t.force_rewrite_invalidate && is_rewrite_transaction(t.get_src());
 }
 
 }

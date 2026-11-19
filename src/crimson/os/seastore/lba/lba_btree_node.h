@@ -152,8 +152,7 @@ struct LBALeafNode
 
   void update(
     internal_const_iterator_t iter,
-    lba_map_val_t val,
-    modification_t mod) final;
+    lba_map_val_t val) final;
 
   internal_const_iterator_t insert(
     internal_const_iterator_t iter,
@@ -320,135 +319,6 @@ struct LBALeafNode
 
   std::ostream &print_detail(std::ostream &out) const final;
 
-  std::map<laddr_t, lba_map_val_t> merge_content_to(
-    Transaction &t,
-    LBALeafNode &pending_version,
-    iterator &iter)
-  {
-    LOG_PREFIX(LBALeafNode::merge_content_to);
-    SUBTRACET(seastore_lba, "merging with {}", t, pending_version);
-    std::map<laddr_t, lba_map_val_t> modified;
-    auto it = pending_version.begin();
-    while (it != pending_version.end() && iter != this->end()) {
-      const auto &v1 = iter->get_val();
-      if (v1.pladdr.is_laddr() ||
-          v1.pladdr.get_paddr().is_zero()) {
-        iter++;
-        continue;
-      }
-      const auto &v2 = it->get_val();
-      if (v2.pladdr.is_laddr() || v2.pladdr.get_paddr().is_zero()) {
-        it++;
-        continue;
-      }
-      auto child = pending_version.children[it->get_offset()];
-      if (unlikely(is_reserved_ptr(child))) {
-        SUBERRORT(seastore_lba, "unexpected reserved ptr for {}, {}",
-          t, it->get_key(), pending_version);
-        ceph_abort();
-      }
-      if (is_valid_child_ptr(child)) {
-        if (// skip the ones that the pending version is also modifying
-           (child->_is_mutable() || child->_is_pending_io()) ||
-           // EXIST_CLEAN extents created by DEMOTE transactions also
-           // updates their paddrs, so they should also be skpped.
-           (pending_version.t->get_src() == transaction_type_t::DEMOTE)) {
-          SUBTRACET(seastore_lba, "skipping {}~{}", t, it->get_key(), it->get_val());
-          it++;
-          continue;
-        } else {
-          assert(child->_is_exist_clean() ||
-                 child->_is_exist_mutation_pending() ||
-                 // a pending child might have been invalidated and
-                 // its corresponding mapping has not been removed
-                 !child->_is_valid());
-        }
-      }
-      SUBTRACET(seastore_lba, "examing v2: {}~{}, v1: {}~{}",
-        t, it->get_key(), it->get_val(), iter->get_key(), iter->get_val());
-      auto pending_key = it->get_key();
-      auto stable_key = iter->get_key();
-      auto stable_end = stable_key + v1.len;
-      if (pending_key < stable_end && pending_key >= stable_key) {
-        auto pending_end = pending_key + v2.len;
-        assert(pending_end <= stable_end);
-        if (pending_key != stable_key) {
-          assert(v2.pladdr != v1.pladdr);
-          assert(is_valid_child_ptr(child));
-          assert(child->_is_exist_clean());
-        }
-        if (v2.pladdr != v1.pladdr) {
-          auto m_v2 = v2;
-          auto off = pending_key.get_byte_distance<extent_len_t>(stable_key);
-          auto paddr = v1.pladdr.get_paddr();
-          paddr = paddr + off;
-          SUBTRACET(seastore_lba, "merging to {}, paddr: {} -> {}",
-            t, pending_version, m_v2.pladdr, paddr);
-          m_v2.pladdr = paddr;
-          if (v1.shadow_paddr == P_ADDR_NULL) {
-            m_v2.shadow_paddr = P_ADDR_NULL;
-          } else {
-            m_v2.shadow_paddr = (v1.shadow_paddr + off);
-          }
-          SUBTRACET(seastore_lba, "merging to {}, paddr: {} -> {}",
-            t, pending_version, m_v2.pladdr, paddr);
-          if (!is_valid_child_ptr(child)) {
-            // exclude the mappings whose children are EXIST_CLEAN ones
-            SUBTRACET(seastore_lba, "merging to {}, checksum: {} -> {}",
-              t, pending_version, m_v2.checksum, v1.checksum);
-            m_v2.checksum = v1.checksum;
-          }
-          it->set_val(m_v2);
-          auto [_it, inserted] = modified.emplace(it->get_key(), m_v2);
-          ceph_assert(inserted);
-        }
-        it++;
-        if (pending_end == stable_end) {
-          iter++;
-        }
-      } else if (pending_key > stable_key) {
-        iter++;
-      } else {
-        it++;
-      }
-    }
-    if (pending_version.is_initial_pending() &&
-        pending_version.get_last_committed_crc()) {
-      // if pending_version has already calculated its crc,
-      // calculate it again and keep the on-page checksum in sync.
-      auto crc = pending_version.calc_crc32c();
-      pending_version.set_last_committed_crc(crc);
-      pending_version.update_in_extent_chksum_field(crc);
-    }
-    return modified;
-  }
-
-  template <template <typename...> typename Container, typename... T>
-  void merge_content_to(Transaction &t, Container<T...> &container) {
-    auto iter = this->begin();
-    for (auto &copy_dest : container) {
-      auto &pending_version = static_cast<LBALeafNode&>(*copy_dest);
-      std::ignore = this->merge_content_to(t, pending_version, iter);
-    }
-  }
-
-  void merge_content_to_pending_versions(Transaction &t) {
-    this->for_each_copy_dest_set(t, [this, &t](auto &copy_dests) {
-#ifndef NDEBUG
-      for (auto &copy_dest : copy_dests.dests_by_key) {
-        auto &pending_version = static_cast<LBALeafNode&>(*copy_dest);
-        assert(pending_version.is_pending());
-      }
-#endif
-      this->merge_content_to(t, copy_dests.dests_by_key);
-    });
-  }
-
-  template <typename Func>
-  void adjust_delta(Func &&f) {
-    ceph_assert(this->is_mutation_pending());
-    this->delta_buffer.for_each(std::forward<Func>(f));
-  }
 };
 using LBALeafNodeRef = TCachedExtentRef<LBALeafNode>;
 

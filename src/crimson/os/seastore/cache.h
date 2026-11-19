@@ -45,9 +45,9 @@ class SegmentProvider;
  *
  * See record_t
  *
- * As such, any transaction has 3 components:
- * 1) read_set: references to extents read during the transaction
- *       See Transaction::read_set
+ * As such, a writing transaction has 2 components (there is no read_set:
+ * a shard has a single writer, see TransactionManager::writer_lock, so
+ * nothing can invalidate what a writer has read):
  * 2) write_set: references to extents to be written as:
  *    a) new physical blocks, see Transaction::fresh_block_list
  *    b) mutations to existing physical blocks,
@@ -56,9 +56,8 @@ class SegmentProvider;
  *    due to releasing the extent generally.
 
  * In the case of 2b, the CachedExtent will have been copied into
- * a fresh CachedExtentRef such that the source extent ref is present
- * in the read set and the newly allocated extent is present in the
- * write_set.
+ * a fresh CachedExtentRef (the prior instance) and the newly allocated
+ * extent is present in the write_set.
  *
  * A transaction has 3 phases:
  * 1) construction: user calls Cache::get_transaction() and populates
@@ -232,19 +231,10 @@ public:
 
       ceph_assert(ret->get_type() == type);
 
-      if (ret->is_stable()) {
-        if (ret->is_stable_dirty()) {
-          ++access_stats.trans_dirty;
-          ++stats.access.trans_dirty;
-        } else {
-          assert(ret->is_stable_clean());
-          ++access_stats.trans_lru;
-          ++stats.access.trans_lru;
-        }
-      } else {
-        ++access_stats.trans_pending;
-        ++stats.access.trans_pending;
-      }
+      // the transaction only tracks its pending extents (no read_set)
+      assert(!ret->is_stable());
+      ++access_stats.trans_pending;
+      ++stats.access.trans_pending;
 
       if (!ret->is_fully_loaded()) {
         SUBDEBUGT(seastore_cache,
@@ -291,7 +281,6 @@ public:
       ++stats.access.cache_lru;
     }
 
-    t.add_to_read_set(ret);
     touch_extent_fully(*ret, &t_src, t.get_cache_hint());
     if (!ret->is_fully_loaded()) {
       SUBDEBUGT(seastore_cache,
@@ -361,7 +350,6 @@ public:
       SUBTRACET(seastore_cache, "{} {}~0x{:x} is absent on t, query cache ...",
                 t, T::TYPE, offset, length);
       auto f = [&t, this, t_src](CachedExtent &ext) {
-        t.add_to_read_set(CachedExtentRef(&ext));
         touch_extent_fully(ext, &t_src, t.get_cache_hint());
       };
       return trans_intr::make_interruptible(
@@ -489,7 +477,6 @@ public:
 	++access_stats.load_absent;
 	++stats.access.load_absent;
 
-	t.add_to_read_set(CachedExtentRef(&ext));
 	touch_extent_fully(ext, &t_src, t.get_cache_hint());
       };
       return trans_intr::make_interruptible(
@@ -526,44 +513,26 @@ public:
       ext_type);
     if (extent.is_stable()) {
       // stable from trans-view
-      bool needs_touch = false, needs_step_2 = false;
       assert(!extent.is_pending_in_trans(t.get_trans_id()));
-      auto ret = t.maybe_add_to_read_set(&extent);
-      if (ret.added) {
-	if (extent.is_stable_dirty()) {
-	  ++access_stats.cache_dirty;
-	  ++stats.access.cache_dirty;
-	} else {
-	  ++access_stats.cache_lru;
-	  ++stats.access.cache_lru;
-	}
-	if (ret.is_paddr_known) {
-	  touch_extent_fully(extent, &t_src, t.get_cache_hint());
-	} else {
-	  needs_touch = true;
-	}
+      if (extent.is_stable_dirty()) {
+	++access_stats.cache_dirty;
+	++stats.access.cache_dirty;
       } else {
-	// already exists
-	if (extent.is_stable_dirty()) {
-	  ++access_stats.trans_dirty;
-	  ++stats.access.trans_dirty;
-	} else {
-	  ++access_stats.trans_lru;
-	  ++stats.access.trans_lru;
-	}
+	++access_stats.cache_lru;
+	++stats.access.cache_lru;
       }
-      // step 2 maybe reordered after wait_io(),
-      // always try step 2 if paddr unknown
-      needs_step_2 = !ret.is_paddr_known;
+      // There is no read_set to tell a transaction's first access apart,
+      // so touch on every access. The paddr of an extent still under io
+      // may be record-relative, touch it once the io completes.
+      bool needs_touch = !extent.get_paddr().is_absolute();
+      if (!needs_touch) {
+	touch_extent_fully(extent, &t_src, t.get_cache_hint());
+      }
 
       auto target_extent = CachedExtentRef(&extent);
       return trans_intr::make_interruptible(
 	extent.wait_io()
-      ).then_interruptible([target_extent, needs_touch,
-			    needs_step_2, &t, this, t_src] {
-	if (needs_step_2) {
-	  t.maybe_add_to_read_set_step_2(target_extent.get());
-	}
+      ).then_interruptible([target_extent, needs_touch, &t, this, t_src] {
 	if (needs_touch) {
 	  touch_extent_fully(*target_extent, &t_src, t.get_cache_hint());
 	}
@@ -577,41 +546,6 @@ public:
       ++stats.access.trans_pending;
       return get_extent_iertr::now();
     }
-  }
-
-  CachedExtentRef get_extent_viewable_by_trans_sync(
-    Transaction &t,
-    CachedExtentRef extent) final {
-    assert(extent->is_valid());
-
-    CachedExtent* p_extent = nullptr;
-    if (extent->is_stable()) {
-      p_extent = extent->maybe_get_transactional_view(t);
-      ceph_assert(p_extent);
-      if (p_extent != extent.get()) {
-        assert(p_extent->is_pending_in_trans(t.get_trans_id()));
-        assert(!p_extent->is_pending_io());
-        if (p_extent->is_mutable()) {
-          assert(p_extent->is_fully_loaded());
-          assert(!p_extent->is_pending_io());
-        } else {
-          assert(p_extent->is_exist_clean());
-        }
-      } else {
-        // stable from trans-view
-        assert(!p_extent->is_pending_in_trans(t.get_trans_id()));
-      }
-    } else {
-      assert(!extent->is_pending_io() || extent->is_exist_clean());
-      assert(extent->is_pending_in_trans(t.get_trans_id()));
-      if (extent->is_mutable()) {
-        assert(extent->is_fully_loaded());
-      } else {
-        assert(extent->is_exist_clean());
-      }
-      p_extent = extent.get();
-    }
-    return p_extent;
   }
 
   get_extent_iertr::future<CachedExtentRef>
@@ -628,7 +562,6 @@ public:
       ext_type);
 
     CachedExtent* p_extent;
-    bool needs_step_2 = false;
     bool needs_touch = false;
     if (extent->is_stable()) {
       p_extent = extent->maybe_get_transactional_view(t);
@@ -649,35 +582,19 @@ public:
       } else {
         // stable from trans-view
         assert(!p_extent->is_pending_in_trans(t.get_trans_id()));
-        auto ret = t.maybe_add_to_read_set(p_extent);
-        if (ret.added) {
-          if (p_extent->is_stable_dirty()) {
-            ++access_stats.cache_dirty;
-            ++stats.access.cache_dirty;
-          } else {
-            assert(p_extent->is_stable_clean());
-            ++access_stats.cache_lru;
-            ++stats.access.cache_lru;
-          }
-          if (ret.is_paddr_known) {
-            touch_extent_fully(*p_extent, &t_src, t.get_cache_hint());
-          } else {
-            needs_touch = true;
-          }
+        if (p_extent->is_stable_dirty()) {
+          ++access_stats.cache_dirty;
+          ++stats.access.cache_dirty;
         } else {
-          // already exists
-          if (p_extent->is_stable_dirty()) {
-            ++access_stats.trans_dirty;
-            ++stats.access.trans_dirty;
-          } else {
-            assert(p_extent->is_stable_clean());
-            ++access_stats.trans_lru;
-            ++stats.access.trans_lru;
-          }
+          assert(p_extent->is_stable_clean());
+          ++access_stats.cache_lru;
+          ++stats.access.cache_lru;
         }
-        // step 2 maybe reordered after wait_io(),
-        // always try step 2 if paddr unknown
-        needs_step_2 = !ret.is_paddr_known;
+        // see get_extent_viewable_by_trans(): touch on every access
+        needs_touch = !p_extent->get_paddr().is_absolute();
+        if (!needs_touch) {
+          touch_extent_fully(*p_extent, &t_src, t.get_cache_hint());
+        }
       }
     } else {
       assert(!extent->is_pending_io() || extent->is_exist_clean());
@@ -701,11 +618,8 @@ public:
     auto target_extent = CachedExtentRef(p_extent);
     return trans_intr::make_interruptible(
       p_extent->wait_io()
-    ).then_interruptible([target_extent, needs_touch, needs_step_2, &t, this, t_src] {
+    ).then_interruptible([target_extent, needs_touch, &t, this, t_src] {
       auto p_extent = target_extent.get();
-      if (needs_step_2) {
-	t.maybe_add_to_read_set_step_2(p_extent);
-      }
       if (needs_touch) {
 	touch_extent_fully(*p_extent, &t_src, t.get_cache_hint());
       }
@@ -1013,7 +927,6 @@ private:
 	t, T::TYPE, offset, length, partial_off, partial_len, *ret);
     add_extent(ret);
     extent_init_func(*ret);
-    t.add_to_read_set(ret);
     return ret;
   }
 
@@ -1177,7 +1090,6 @@ private:
       SUBTRACET(seastore_cache, "{} {}~0x{:x} {} is absent on t, query cache ...",
                 t, type, offset, length, laddr);
       auto f = [&t, this, t_src](CachedExtent &ext) {
-	t.add_to_read_set(CachedExtentRef(&ext));
 	touch_extent_fully(ext, &t_src, t.get_cache_hint());
       };
       return trans_intr::make_interruptible(
@@ -1689,14 +1601,10 @@ public:
       if (t.root) {
 	return t.root;
       } else {
-	t.add_to_read_set(extent);
 	t.root = extent->cast<RootBlock>();
 	return extent;
       }
     } else {
-      if (extent->is_stable()) {
-	std::ignore = t.maybe_add_to_read_set(extent);
-      }
       return extent->maybe_get_transactional_view(t);
     }
   }
@@ -1988,19 +1896,6 @@ private:
   ExtentPinboardRef pinboard;
 
   btree_cursor_stats_t cursor_stats;
-  struct invalid_trans_efforts_t {
-    io_stat_t read;
-    io_stat_t mutate;
-    uint64_t mutate_delta_bytes = 0;
-    io_stat_t retire;
-    io_stat_t fresh;
-    io_stat_t fresh_ool_written;
-    counter_by_extent_t<uint64_t> num_trans_invalidated;
-    uint64_t total_trans_invalidated = 0;
-    uint64_t num_ool_records = 0;
-    uint64_t ool_record_bytes = 0;
-  };
-
   struct commit_trans_efforts_t {
     counter_by_extent_t<io_stat_t> read_by_ext;
     counter_by_extent_t<io_stat_t> mutate_by_ext;
@@ -2033,13 +1928,9 @@ private:
     }
   };
 
-  static constexpr std::size_t NUM_SRC_COMB =
-      TRANSACTION_TYPE_MAX * (TRANSACTION_TYPE_MAX + 1) / 2;
-
   struct {
     counter_by_src_t<uint64_t> trans_created_by_src;
     counter_by_src_t<commit_trans_efforts_t> committed_efforts_by_src;
-    counter_by_src_t<invalid_trans_efforts_t> invalidated_efforts_by_src;
     success_read_trans_efforts_t success_read_efforts;
 
     uint64_t dirty_bytes = 0;
@@ -2060,25 +1951,18 @@ private:
     uint64_t onode_tree_depth = 0;
     int64_t onode_tree_extents_num = 0;
     counter_by_src_t<tree_efforts_t> committed_onode_tree_efforts;
-    counter_by_src_t<tree_efforts_t> invalidated_onode_tree_efforts;
 
     uint64_t omap_tree_depth = 0;
     int64_t omap_tree_extents_num = 0;
     counter_by_src_t<tree_efforts_t> committed_omap_tree_efforts;
-    counter_by_src_t<tree_efforts_t> invalidated_omap_tree_efforts;
 
     uint64_t lba_tree_depth = 0;
     int64_t lba_tree_extents_num = 0;
     counter_by_src_t<tree_efforts_t> committed_lba_tree_efforts;
-    counter_by_src_t<tree_efforts_t> invalidated_lba_tree_efforts;
 
     uint64_t backref_tree_depth = 0;
     int64_t backref_tree_extents_num = 0;
     counter_by_src_t<tree_efforts_t> committed_backref_tree_efforts;
-    counter_by_src_t<tree_efforts_t> invalidated_backref_tree_efforts;
-
-    std::array<uint64_t, NUM_SRC_COMB> trans_conflicts_by_srcs;
-    counter_by_src_t<uint64_t> trans_conflicts_by_unknown;
 
     uint64_t write_hit_hot = 0;
     uint64_t write_hit_cold = 0;
@@ -2109,38 +1993,6 @@ private:
   mutable counter_by_src_t<uint64_t> last_cache_absent_by_src;
   mutable counter_by_src_t<counter_by_extent_t<cache_access_stats_t> >
     last_access_by_src_ext;
-
-  void account_conflict(Transaction::src_t src1, Transaction::src_t src2) {
-    assert(src1 < Transaction::src_t::MAX);
-    assert(src2 < Transaction::src_t::MAX);
-    if (src1 > src2) {
-      std::swap(src1, src2);
-    }
-    // impossible combinations
-    // should be consistent with trans_srcs_invalidated in register_metrics()
-    assert(!(src1 == Transaction::src_t::READ &&
-             src2 == Transaction::src_t::READ));
-    assert(!(src1 == Transaction::src_t::TRIM_DIRTY &&
-             src2 == Transaction::src_t::TRIM_DIRTY));
-    assert(!(src1 == Transaction::src_t::CLEANER_MAIN &&
-	     src2 == Transaction::src_t::CLEANER_MAIN));
-    assert(!(src1 == Transaction::src_t::CLEANER_COLD &&
-	     src2 == Transaction::src_t::CLEANER_COLD));
-    assert(!(src1 == Transaction::src_t::PROMOTE &&
-	     src2 == Transaction::src_t::PROMOTE));
-    assert(!(src1 == Transaction::src_t::DEMOTE &&
-	     src2 == Transaction::src_t::DEMOTE));
-    assert(!(src1 == Transaction::src_t::TRIM_ALLOC &&
-             src2 == Transaction::src_t::TRIM_ALLOC));
-
-    auto src1_value = static_cast<std::size_t>(src1);
-    auto src2_value = static_cast<std::size_t>(src2);
-    auto num_srcs = static_cast<std::size_t>(Transaction::src_t::MAX);
-    auto conflict_index = num_srcs * src1_value + src2_value -
-        src1_value * (src1_value + 1) / 2;
-    assert(conflict_index < NUM_SRC_COMB);
-    ++stats.trans_conflicts_by_srcs[conflict_index];
-  }
 
   seastar::metrics::metric_group metrics;
   void register_metrics(store_index_t store_index);
@@ -2220,10 +2072,6 @@ void stage_visibility_handoff(Transaction& t,
 
   /// Invalidate extent and mark affected transactions
   void invalidate_extent(Transaction& t, CachedExtent& extent);
-
-  /// Mark a valid transaction as conflicted
-  void mark_transaction_conflicted(
-    Transaction& t, CachedExtent& conflicting_extent);
 
   /// Introspect transaction when it is being destructed
   void on_transaction_destruct(Transaction& t);

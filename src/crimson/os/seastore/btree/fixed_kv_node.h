@@ -508,53 +508,6 @@ struct FixedKVInternalNode
     return this->get_size() < get_min_capacity();
   }
 
-  void reapply_delta() final {
-    if (delta_buffer.empty()) {
-      return;
-    }
-    delta_buffer.replay(*this);
-  }
-
-  void merge_content_to_pending_versions(Transaction &t) {
-    this->for_each_copy_dest_set(t, [this, &t](auto &copy_dests) {
-      this->merge_content_to(t, copy_dests.dests_by_key);
-    });
-  }
-
-  template <template <typename...> typename Container, typename... T>
-  void merge_content_to(Transaction &t, Container<T...> &container) {
-    auto iter = this->begin();
-    for (auto &copy_dest : container) {
-      auto &pending_version = static_cast<this_type_t&>(*copy_dest);
-      auto it = pending_version.begin();
-      while (it != pending_version.end() && iter != this->end()) {
-        if (auto child = pending_version.children[it->get_offset()];
-            is_valid_child_ptr(child) &&
-            (child->_is_mutable() || child->_is_pending_io())) {
-          // skip the ones that the pending version is also modifying
-          it++;
-          continue;
-        }
-        if (it->get_key() == iter->get_key()) {
-          it->set_val(iter->get_val());
-          it++;
-          iter++;
-        } else if (it->get_key() > iter->get_key()) {
-          iter++;
-        } else {
-          it++;
-        }
-      }
-      if (pending_version.get_last_committed_crc()) {
-        // if pending_version has already calculated its crc,
-        // calculate it again and keep the on-page checksum in sync.
-        auto crc = pending_version.calc_crc32c();
-        pending_version.set_last_committed_crc(crc);
-        pending_version.update_in_extent_chksum_field(crc);
-      }
-    }
-  }
-
 };
 
 template <
@@ -735,8 +688,7 @@ struct FixedKVLeafNode
 
   virtual void update(
     internal_const_iterator_t iter,
-    VAL val,
-    modification_t mod) = 0;
+    VAL val) = 0;
   virtual internal_const_iterator_t insert(
     internal_const_iterator_t iter,
     NODE_KEY addr,
@@ -892,12 +844,6 @@ struct FixedKVLeafNode
     return this->get_size() < get_min_capacity();
   }
 
-  void reapply_delta() final {
-    if (delta_buffer.empty()) {
-      return;
-    }
-    delta_buffer.replay(*this);
-  }
 };
 
 } // namespace crimson::os::seastore

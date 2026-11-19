@@ -591,21 +591,6 @@ private:
     LBACursorRef dest,
     LogicalChildNode *extent);
 
-  /**
-   * update_paddr_sync
-   *
-   * This is basically for updating the paddr of the mapping
-   * that has been copied by the transaction t and modified
-   * by some background rewrite transaction.
-   *
-   * Synchronous - requires the leaf to already be cached.
-   */
-  void update_paddr_sync(
-    Transaction &t,
-    laddr_t laddr,
-    paddr_t paddr,
-    extent_len_t len,
-    std::optional<paddr_t> shadow);
 
 
   /**

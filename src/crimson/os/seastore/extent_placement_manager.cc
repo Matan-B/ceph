@@ -1290,33 +1290,9 @@ RandomBlockOolWriter::alloc_write_ool_extents(
     try {
       co_await trans_intr::make_interruptible(
         token_bucket.get(size));
-      // Backpressure on accumulated deferred frees of conflicted OOL writes.
-      co_await trans_intr::make_interruptible(
-        rb_cleaner->wait_for_conflict_drain());
-      seastar::lw_shared_ptr<rbm_pending_ool_t> ptr =
-          seastar::make_lw_shared<rbm_pending_ool_t>();
-      // Only this write's extents: pre_alloc_list also holds extents of other
-      // tiers' writers, which rb_cleaner neither owns nor accounts.
-      ptr->pending_extents.assign(extents.begin(), extents.end());
-      assert(!t.is_conflicted());
-      t.set_pending_ool(ptr);
-      // Conflict check, frees and clear_pending_ool() run in the completion
-      // continuation itself: atomic w.r.t. task interleaving and on every exit
-      // path. t outlives the future (the submit fiber awaits this coroutine).
-      co_await do_write(t, extents
-      ).finally([this, ptr=ptr, &t] {
-        if (ptr->is_conflicted) {
-          std::size_t freed = 0;
-          for (auto &e : ptr->deferred_frees) {
-            rb_cleaner->mark_space_free(e->get_paddr(), e->get_length());
-            freed += e->get_length();
-          }
-          if (freed > 0) {
-            rb_cleaner->deaccount_conflict_pending_free(freed);
-          }
-        }
-        t.clear_pending_ool();
-      });
+      // A writer is never invalidated (single writer per shard), so the
+      // extents of an in-flight OOL write are never freed under it.
+      co_await do_write(t, extents);
     } catch (...) {
       token_bucket.release(size);
       throw;
