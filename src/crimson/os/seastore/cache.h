@@ -131,6 +131,7 @@ public:
       ++next_id,
       cache_hint)
     );
+    ret->init_reader_epoch(invalidation_epoch);
     SUBDEBUGT(seastore_t, "created name={}, source={}, is_weak={}",
               *ret, name, src, is_weak);
     assert(!is_weak || src == Transaction::src_t::READ);
@@ -281,7 +282,7 @@ public:
       ++stats.access.cache_lru;
     }
 
-    touch_extent_fully(*ret, &t_src, t.get_cache_hint());
+    access_extent(t, *ret);
     if (!ret->is_fully_loaded()) {
       SUBDEBUGT(seastore_cache,
         "{} {}~0x{:x} is present without fully loaded in cache -- {}",
@@ -350,7 +351,7 @@ public:
       SUBTRACET(seastore_cache, "{} {}~0x{:x} is absent on t, query cache ...",
                 t, T::TYPE, offset, length);
       auto f = [&t, this, t_src](CachedExtent &ext) {
-        touch_extent_fully(ext, &t_src, t.get_cache_hint());
+        access_extent(t, ext);
       };
       return trans_intr::make_interruptible(
         do_get_caching_extent<T>(
@@ -477,7 +478,7 @@ public:
 	++access_stats.load_absent;
 	++stats.access.load_absent;
 
-	touch_extent_fully(ext, &t_src, t.get_cache_hint());
+	access_extent(t, ext);
       };
       return trans_intr::make_interruptible(
 	do_get_caching_extent<T>(
@@ -526,7 +527,7 @@ public:
       // may be record-relative, touch it once the io completes.
       bool needs_touch = !extent.get_paddr().is_absolute();
       if (!needs_touch) {
-	touch_extent_fully(extent, &t_src, t.get_cache_hint());
+	access_extent(t, extent);
       }
 
       auto target_extent = CachedExtentRef(&extent);
@@ -534,7 +535,7 @@ public:
 	extent.wait_io()
       ).then_interruptible([target_extent, needs_touch, &t, this, t_src] {
 	if (needs_touch) {
-	  touch_extent_fully(*target_extent, &t_src, t.get_cache_hint());
+	  access_extent(t, *target_extent);
 	}
 	return get_extent_iertr::now();
       });
@@ -593,7 +594,7 @@ public:
         // see get_extent_viewable_by_trans(): touch on every access
         needs_touch = !p_extent->get_paddr().is_absolute();
         if (!needs_touch) {
-          touch_extent_fully(*p_extent, &t_src, t.get_cache_hint());
+          access_extent(t, *p_extent);
         }
       }
     } else {
@@ -621,7 +622,7 @@ public:
     ).then_interruptible([target_extent, needs_touch, &t, this, t_src] {
       auto p_extent = target_extent.get();
       if (needs_touch) {
-	touch_extent_fully(*p_extent, &t_src, t.get_cache_hint());
+	access_extent(t, *p_extent);
       }
       return get_extent_iertr::make_ready_future<CachedExtentRef>(
         CachedExtentRef(p_extent));
@@ -927,6 +928,9 @@ private:
 	t, T::TYPE, offset, length, partial_off, partial_len, *ret);
     add_extent(ret);
     extent_init_func(*ret);
+    if (t.is_validated_reader()) {
+      t.reader_track(ret);
+    }
     return ret;
   }
 
@@ -1090,7 +1094,7 @@ private:
       SUBTRACET(seastore_cache, "{} {}~0x{:x} {} is absent on t, query cache ...",
                 t, type, offset, length, laddr);
       auto f = [&t, this, t_src](CachedExtent &ext) {
-	touch_extent_fully(ext, &t_src, t.get_cache_hint());
+	access_extent(t, ext);
       };
       return trans_intr::make_interruptible(
 	do_get_caching_extent_by_type(
@@ -1796,6 +1800,30 @@ public:
     return epm.is_cold_device(paddr.get_device_id());
   }
 private:
+  /**
+   * access_extent
+   *
+   * t accessed ext through the cache. For a READ transaction, first restart
+   * it (eagain) if an extent it accessed earlier was invalidated by a commit
+   * in the meantime, see Transaction::reader_is_stale(). Then touch ext.
+   */
+  void access_extent(Transaction &t, CachedExtent &ext) {
+    if (t.is_validated_reader()) {
+      if (t.reader_is_stale(invalidation_epoch)) {
+        LOG_PREFIX(Cache::access_extent);
+        SUBDEBUGT(seastore_cache, "reader restart -- {}", t, ext);
+        ++stats.reader_restarts;
+        std::rethrow_exception(crimson::ct_error::eagain::exception_ptr());
+      }
+      t.reader_track(CachedExtentRef(&ext));
+    }
+    const auto t_src = t.get_src();
+    touch_extent_fully(ext, &t_src, t.get_cache_hint());
+  }
+
+  /// Bumped whenever a commit invalidates an extent, see access_extent()
+  uint64_t invalidation_epoch = 0;
+
   void touch_extent_fully(
       CachedExtent &ext,
       const Transaction::src_t* p_src,
@@ -1963,6 +1991,7 @@ private:
     uint64_t backref_tree_depth = 0;
     int64_t backref_tree_extents_num = 0;
     counter_by_src_t<tree_efforts_t> committed_backref_tree_efforts;
+    uint64_t reader_restarts = 0;
 
     uint64_t write_hit_hot = 0;
     uint64_t write_hit_cold = 0;

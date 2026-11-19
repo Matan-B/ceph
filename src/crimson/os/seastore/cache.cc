@@ -903,8 +903,9 @@ void Cache::invalidate_extent(
     Transaction& t,
     CachedExtent& extent)
 {
-  // Under single-writer shard execution, conflict invalidation of concurrent
-  // transactions is eliminated. Extent is marked invalid directly.
+  // Single writer per shard: no other writer can hold this extent. Readers
+  // that accessed it notice on their next cache access, see access_extent().
+  ++invalidation_epoch;
   extent.set_invalid(t);
 }
 
@@ -2400,6 +2401,10 @@ Cache::get_root_ret Cache::get_root(Transaction &t)
   } else {
     DEBUGT("root not on t -- {}", t, *root);
     t.root = root;
+    if (t.is_validated_reader()) {
+      // restarts the reader if the root it saw earlier got replaced
+      access_extent(t, *root);
+    }
     return root->wait_io().then([root=root] {
       return get_root_iertr::make_ready_future<RootBlockRef>(
 	root);
@@ -2509,7 +2514,7 @@ Cache::_get_absent_extent_by_type(
     type);
   ++access_stats.load_absent;
   ++stats.access.load_absent;
-  touch_extent_fully(*ret, &t_src, t.get_cache_hint());
+  access_extent(t, *ret);
   return trans_intr::make_interruptible(
     read_extent(std::move(ret), 0, length, &t_src, pin_crc
     ).safe_then([laddr](auto extent) {

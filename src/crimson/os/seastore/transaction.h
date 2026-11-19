@@ -418,6 +418,44 @@ public:
     return num_replays;
   }
 
+  /**
+   * Reader validation
+   *
+   * Writers never conflict (single writer per shard, see
+   * TransactionManager::writer_lock). READ transactions still run
+   * concurrently with the writer and may observe its commits between their
+   * awaits. A reader remembers the extents it accessed and restarts once one
+   * of them got invalidated (retired or replaced by a commit).
+   *
+   * Unlike the removed read_set there is no bookkeeping on the extent side:
+   * the writer only bumps Cache::invalidation_epoch, and a reader rescans
+   * its extents only when that epoch moved since its last check.
+   */
+  bool is_validated_reader() const {
+    return src == src_t::READ && !weak;
+  }
+  void reader_track(CachedExtentRef ref) {
+    assert(is_validated_reader());
+    reader_extents.emplace_back(std::move(ref));
+  }
+  /// true if an extent this reader accessed was invalidated since
+  bool reader_is_stale(uint64_t invalidation_epoch) {
+    assert(is_validated_reader());
+    if (invalidation_epoch == reader_checked_epoch) {
+      return false;
+    }
+    reader_checked_epoch = invalidation_epoch;
+    for (auto &ext : reader_extents) {
+      if (!ext->is_valid()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  void init_reader_epoch(uint64_t invalidation_epoch) {
+    reader_checked_epoch = invalidation_epoch;
+  }
+
   // Time spent in each sub-phase of submit_transaction, accumulated across retries
   struct phase_durations_t {
     std::chrono::steady_clock::duration reserve{0};         // enter reserve + epm reserve
@@ -668,6 +706,10 @@ private:
    * If set, *this may not be used to perform writes.
    */
   const bool weak;
+
+  /// see reader_is_stale()
+  std::vector<CachedExtentRef> reader_extents;
+  uint64_t reader_checked_epoch = 0;
 
   RootBlockRef root;        ///< ref to root if read or written by transaction
 
