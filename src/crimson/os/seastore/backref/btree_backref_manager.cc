@@ -76,7 +76,7 @@ BtreeBackrefManager::mkfs(
   auto croot = co_await cache.get_root(t);
   croot->get_root().backref_root =
     co_await BackrefBtree::mkfs(croot, get_context(t)
-    ).handle_error_interruptible(
+    ).handle_error(
       mkfs_iertr::pass_further{},
       crimson::ct_error::assert_all(
         "Invalid error in BtreeBackrefManager::mkfs"
@@ -98,7 +98,7 @@ BtreeBackrefManager::get_mapping(
     [c, offset](auto &btree) {
     return btree.lower_bound(
       c, offset
-    ).si_then([offset, c](auto iter) -> get_mapping_ret {
+    ).safe_then([offset, c](auto iter) -> get_mapping_ret {
       LOG_PREFIX(BtreeBackrefManager::get_mapping);
       if (iter.is_end() || iter.get_key() != offset) {
 	ERRORT("{} doesn't exist", c.trans, offset);
@@ -106,8 +106,7 @@ BtreeBackrefManager::get_mapping(
       } else {
 	TRACET("{} got {}, {}",
 	       c.trans, offset, iter.get_key(), iter.get_val());
-	return get_mapping_ret(
-	  interruptible::ready_future_marker{},
+	return make_ready_fut<get_mapping_ret>(
 	  BackrefMapping::create(iter.get_cursor(c)));
       }
     });
@@ -135,16 +134,14 @@ BtreeBackrefManager::get_mappings(
 	  if (pos.is_end() || pos.get_key() >= end) {
 	    TRACET("{}~{} done with {} results",
 	           c.trans, offset, end, ret.size());
-	    return BackrefBtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	      seastar::stop_iteration::yes);
 	  }
 	  TRACET("{}~{} got {}, {}, repeat ...",
 	         c.trans, offset, end, pos.get_key(), pos.get_val());
 	  ceph_assert((pos.get_key().add_offset(pos.get_val().len)) > offset);
 	  ret.emplace_back(BackrefMapping::create(pos.get_cursor(c)));
-	  return BackrefBtree::iterate_repeat_ret_inner(
-	    interruptible::ready_future_marker{},
+	  return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	    seastar::stop_iteration::no);
 	});
     });
@@ -197,8 +194,7 @@ BtreeBackrefManager::new_mapping(
                    //stats.num_alloc_extents_iter_nexts - lookup_attempts,
                    state.last_end);
 	    state.insert_iter = pos;
-	    return BackrefBtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	      seastar::stop_iteration::yes);
 	  } else if (pos.get_key() >= (state.last_end.add_offset(len))) {
 	    DEBUGT("{}~{}, paddr={}, state: {}~{}, "
@@ -209,8 +205,7 @@ BtreeBackrefManager::new_mapping(
                    state.last_end,
                    pos.get_val());
 	    state.insert_iter = pos;
-	    return BackrefBtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	      seastar::stop_iteration::yes);
 	  } else {
 	    ERRORT("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
@@ -218,18 +213,17 @@ BtreeBackrefManager::new_mapping(
                    pos.get_key(), pos.get_val().len,
                    pos.get_val());
 	    ceph_abort_msg("not possible for the backref tree");
-	    return BackrefBtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	      seastar::stop_iteration::no);
 	  }
-	}).si_then([c, addr, len, key, &btree, &state, val] {
+	}).safe_then([c, addr, len, key, &btree, &state, val] {
 	  return btree.insert(
 	    c,
 	    *state.insert_iter,
 	    state.last_end,
 	    val,
             nullptr
-	  ).si_then([&state, c, addr, len, key](auto &&p) {
+	  ).safe_then([&state, c, addr, len, key](auto &&p) {
 	    LOG_PREFIX(BtreeBackrefManager::new_mapping);
 	    auto [iter, inserted] = std::move(p);
 	    TRACET("{}~{}, paddr={}, inserted at {}, leaf {}",
@@ -238,7 +232,7 @@ BtreeBackrefManager::new_mapping(
 	    state.ret = iter;
 	  });
 	});
-    }).si_then([c](auto &&state) {
+    }).safe_then([c](auto &&state) {
       return new_mapping_iertr::make_ready_future<BackrefMapping>(
 	BackrefMapping::create(state.ret->get_cursor(c)));
     });
@@ -261,7 +255,7 @@ BtreeBackrefManager::merge_cached_backrefs(
       backref_entryrefs_by_seq.begin(),
       JOURNAL_SEQ_NULL,
       [this, &t, &limit, &backref_entryrefs_by_seq, max](auto &iter, auto &inserted_to) {
-      return trans_intr::repeat(
+      return crimson::repeat(
         [&iter, this, &t, &limit, &backref_entryrefs_by_seq, max, &inserted_to]()
         -> merge_cached_backrefs_iertr::future<seastar::stop_iteration> {
         if (iter == backref_entryrefs_by_seq.end()) {
@@ -275,7 +269,7 @@ BtreeBackrefManager::merge_cached_backrefs(
           , t, seq, limit, t.get_num_fresh_backref());
         if (seq <= limit && t.get_num_fresh_backref() * BACKREF_NODE_SIZE < max) {
           inserted_to = seq;
-          return trans_intr::do_for_each(
+          return crimson::do_for_each(
             backref_entry_refs,
             [this, &t](auto &backref_entry_ref) {
             LOG_PREFIX(BtreeBackrefManager::merge_cached_backrefs);
@@ -291,7 +285,7 @@ BtreeBackrefManager::merge_cached_backrefs(
                 backref_entry.paddr,
                 backref_entry.len,
                 backref_entry.laddr,
-                backref_entry.type).si_then([](auto &&pin) {
+                backref_entry.type).safe_then([](auto &&pin) {
                 return seastar::now();
               });
             } else {
@@ -300,14 +294,14 @@ BtreeBackrefManager::merge_cached_backrefs(
                 t,
                 backref_entry.paddr,
                 backref_entry.type
-              ).si_then([](auto&&) {
+              ).safe_then([](auto&&) {
                 return seastar::now();
-              }).handle_error_interruptible(
+              }).handle_error(
                 crimson::ct_error::input_output_error::pass_further(),
                 crimson::ct_error::assert_all("no enoent possible")
               );
             }
-          }).si_then([&iter] {
+          }).safe_then([&iter] {
             iter++;
             return seastar::make_ready_future<seastar::stop_iteration>(
               seastar::stop_iteration::no);
@@ -315,7 +309,7 @@ BtreeBackrefManager::merge_cached_backrefs(
         }
         return seastar::make_ready_future<seastar::stop_iteration>(
           seastar::stop_iteration::yes);
-      }).si_then([&inserted_to] {
+      }).safe_then([&inserted_to] {
         return seastar::make_ready_future<journal_seq_t>(
           std::move(inserted_to));
       });
@@ -350,8 +344,7 @@ BtreeBackrefManager::scan_mapped_space(
 	  P_ADDR_MIN),
 	[c, &scan_visitor, block_size, FNAME](auto &pos) {
 	  if (pos.is_end()) {
-	    return BackrefBtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	      seastar::stop_iteration::yes);
 	  }
 	  TRACET("tree value {}~{} {}~{} {} used",
@@ -372,12 +365,11 @@ BtreeBackrefManager::scan_mapped_space(
 	      pos.get_val().len,
 	      pos.get_val().type,
 	      pos.get_val().laddr);
-	  return BackrefBtree::iterate_repeat_ret_inner(
-	    interruptible::ready_future_marker{},
+	  return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 	    seastar::stop_iteration::no);
 	}
       );
-    }).si_then([this, &scan_visitor, c, FNAME, block_size] {
+    }).safe_then([this, &scan_visitor, c, FNAME, block_size] {
       // traverse alloc-deltas in order
       auto &backref_entryrefs = cache.get_backref_entryrefs_by_seq();
       for (auto &[seq, refs] : backref_entryrefs) {
@@ -411,7 +403,7 @@ BtreeBackrefManager::scan_mapped_space(
 	    backref_entry->laddr);
 	}
       }
-    }).si_then([this, &scan_visitor, block_size, c, FNAME] {
+    }).safe_then([this, &scan_visitor, block_size, c, FNAME] {
       BackrefBtree::mapped_space_visitor_t f =
 	[&scan_visitor, block_size, FNAME, c](
 	  paddr_t paddr, paddr_t key, extent_len_t len,
@@ -441,12 +433,10 @@ BtreeBackrefManager::scan_mapped_space(
 	      &tree_visitor),
 	    [](auto &pos) {
 	      if (pos.is_end()) {
-		return BackrefBtree::iterate_repeat_ret_inner(
-		  interruptible::ready_future_marker{},
+		return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 		  seastar::stop_iteration::yes);
 	      }
-	      return BackrefBtree::iterate_repeat_ret_inner(
-		interruptible::ready_future_marker{},
+	      return make_ready_fut<BackrefBtree::iterate_repeat_ret_inner>(
 		seastar::stop_iteration::no);
 	    },
 	    &tree_visitor
@@ -508,7 +498,7 @@ base_iertr::future<> _init_cached_extent(
   bool &ret)
 {
   return btree.init_cached_extent(c, e
-  ).si_then([&ret](bool is_alive) {
+  ).safe_then([&ret](bool is_alive) {
     ret = is_alive;
   });
 }
@@ -526,7 +516,7 @@ BtreeBackrefManager::init_cached_extent_ret BtreeBackrefManager::init_cached_ext
       LOG_PREFIX(BtreeBackrefManager::init_cached_extent);
       DEBUGT("extent {}", c.trans, *e);
       return _init_cached_extent(c, e, btree, ret);
-    }).si_then([&ret] { return ret; });
+    }).safe_then([&ret] { return ret; });
   });
 }
 
@@ -557,7 +547,7 @@ BtreeBackrefManager::remove_mapping(
     [c, addr, type](auto &btree) mutable {
       return btree.lower_bound(
 	c, addr
-      ).si_then([&btree, c, addr, type](auto iter)
+      ).safe_then([&btree, c, addr, type](auto iter)
 		-> remove_mapping_ret {
 	if (iter.is_end() || iter.get_key() != addr) {
 	  LOG_PREFIX(BtreeBackrefManager::remove_mapping);
@@ -576,7 +566,7 @@ BtreeBackrefManager::remove_mapping(
 	return btree.remove(
 	  c,
 	  iter
-	).si_then([ret](auto) {
+	).safe_then([ret](auto) {
 	  return ret;
 	});
       });
@@ -610,7 +600,7 @@ BtreeBackrefManager::retrieve_backref_extents_in_range(
       std::vector<CachedExtentRef>(),
       std::move(backref_extents),
       [this, &t](auto &extents, auto &backref_extents) {
-    return trans_intr::parallel_for_each(
+    return retrieve_backref_extents_in_range_iertr::parallel_for_each(
       backref_extents,
       [this, &extents, &t](auto &ent) {
       // only the gc fiber which is single can rewrite backref extents,
@@ -636,11 +626,11 @@ BtreeBackrefManager::retrieve_backref_extents_in_range(
 	  return btree.get_leaf_if_live(
 	    c, ent.paddr, ent.key, BACKREF_NODE_SIZE);
 	}
-      }).si_then([&extents](auto ext) {
+      }).safe_then([&extents](auto ext) {
 	ceph_assert(ext);
 	extents.emplace_back(std::move(ext));
       });
-    }).si_then([&extents] {
+    }).safe_then([&extents] {
       return std::move(extents);
     });
   });

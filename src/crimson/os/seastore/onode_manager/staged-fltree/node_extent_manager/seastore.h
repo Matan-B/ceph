@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <random>
 
 #include "crimson/os/seastore/logging.h"
 #include "crimson/os/seastore/collection_manager.h"
@@ -107,26 +106,15 @@ class TransactionManagerHandle : public NodeExtentManager {
   TransactionManager &tm;
 };
 
-template <bool INJECT_EAGAIN=false>
 class SeastoreNodeExtentManager final: public TransactionManagerHandle {
  public:
   SeastoreNodeExtentManager(
-      TransactionManager &tm, laddr_t min, double p_eagain,
+      TransactionManager &tm, laddr_t min,
       coll_t cid, CollectionManager &collection_manager)
       : TransactionManagerHandle(tm), addr_min{min},
-        cid{cid}, collection_manager{collection_manager}, p_eagain{p_eagain} {
-    if constexpr (INJECT_EAGAIN) {
-      assert(p_eagain > 0.0 && p_eagain < 1.0);
-    } else {
-      assert(p_eagain == 0.0);
-    }
-  }
+        cid{cid}, collection_manager{collection_manager} {}
 
   ~SeastoreNodeExtentManager() override = default;
-
-  void set_generate_eagain(bool enable) {
-    generate_eagain = enable;
-  }
 
  protected:
   bool is_read_isolated() const override { return true; }
@@ -134,15 +122,8 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
   read_iertr::future<NodeExtentRef> read_extent(
       Transaction& t, laddr_t addr) override {
     SUBTRACET(seastore_onode, "reading at {} ...", t, addr);
-    if constexpr (INJECT_EAGAIN) {
-      if (trigger_eagain()) {
-        SUBDEBUGT(seastore_onode, "reading at {}: trigger eagain", t, addr);
-        t.test_set_conflict();
-        return read_iertr::make_ready_future<NodeExtentRef>();
-      }
-    }
     return tm.read_extent<SeastoreNodeExtent>(t, addr
-    ).si_then([addr, &t](auto maybe_indirect_extent)
+    ).safe_then([addr, &t](auto maybe_indirect_extent)
               -> read_iertr::future<NodeExtentRef> {
       auto e = maybe_indirect_extent.extent;
       SUBTRACET(seastore_onode,
@@ -159,15 +140,8 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
   alloc_iertr::future<NodeExtentRef> alloc_extent(
       Transaction& t, laddr_hint_t hint, extent_len_t len) override {
     SUBTRACET(seastore_onode, "allocating {}B with hint {} ...", t, len, hint);
-    if constexpr (INJECT_EAGAIN) {
-      if (trigger_eagain()) {
-        SUBDEBUGT(seastore_onode, "allocating {}B: trigger eagain", t, len);
-        t.test_set_conflict();
-        return alloc_iertr::make_ready_future<NodeExtentRef>();
-      }
-    }
     return tm.alloc_non_data_extent<SeastoreNodeExtent>(t, hint, len
-    ).si_then([len, &t](auto extent) {
+    ).safe_then([len, &t](auto extent) {
       SUBDEBUGT(seastore_onode,
           "allocated {}B at {} -- {}",
           t, extent->get_length(), extent->get_laddr(), *extent);
@@ -180,7 +154,7 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
       assert(extent->get_length() == len);
       std::ignore = len;
       return NodeExtentRef(extent);
-    }).handle_error_interruptible(
+    }).handle_error(
       crimson::ct_error::enospc::assert_failure("unexpected enospc"),
       alloc_iertr::pass_further{}
     );
@@ -194,16 +168,7 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
     SUBDEBUGT(seastore_onode,
         "retiring {}B at {} -- {} ...",
         t, len, addr, *extent);
-    if constexpr (INJECT_EAGAIN) {
-      if (trigger_eagain()) {
-        SUBDEBUGT(seastore_onode,
-            "retiring {}B at {} -- {} : trigger eagain",
-            t, len, addr, *extent);
-        t.test_set_conflict();
-        return retire_iertr::now();
-      }
-    }
-    return tm.remove(t, extent).si_then([addr, len, &t] (unsigned cnt) {
+    return tm.remove(t, extent).safe_then([addr, len, &t] (unsigned cnt) {
       assert(cnt == 0);
       SUBTRACET(seastore_onode, "retired {}B at {} ...", t, len, addr);
     });
@@ -212,29 +177,22 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
   getsuper_iertr::future<Super::URef> get_super(
       Transaction& t, RootNodeTracker& tracker) override {
     SUBTRACET(seastore_onode, "get root ...", t);
-    if constexpr (INJECT_EAGAIN) {
-      if (trigger_eagain()) {
-        SUBDEBUGT(seastore_onode, "get root: trigger eagain", t);
-        t.test_set_conflict();
-        return getsuper_iertr::make_ready_future<Super::URef>();
-      }
-    }
     if (cid == coll_t::meta()) {
-      return tm.read_meta_onode_root(t).si_then(
+      return tm.read_meta_onode_root(t).safe_then(
           [this, &t, &tracker](auto root_addr) {
         SUBTRACET(seastore_onode, "meta got root {}", t, root_addr);
         return Super::URef(new SeastoreSuper(t, tracker, root_addr, tm));
       });
     }
-    return tm.read_collection_root(t).si_then(
+    return tm.read_collection_root(t).safe_then(
         [this, &t](auto coll_root) {
       return collection_manager.get_coll_node(coll_root, t);
-    }).handle_error_interruptible(
+    }).handle_error(
       getsuper_iertr::pass_further{},
       crimson::ct_error::assert_all(
         "SeastoreNodeExtentManager::get_super: unexpected error reading "
         "collection node")
-    ).si_then([this, &t, &tracker](auto coll_node) {
+    ).safe_then([this, &t, &tracker](auto coll_node) {
       auto &value = coll_node->get_value(cid);
       SUBTRACET(seastore_onode, "coll {} got root {}", t, cid, value.onode_root);
       return Super::URef(new SeastoreSuper(
@@ -243,11 +201,7 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
   }
 
   std::ostream& print(std::ostream& os) const override {
-    os << "SeastoreNodeExtentManager";
-    if constexpr (INJECT_EAGAIN) {
-      os << "(p_eagain=" << p_eagain << ")";
-    }
-    return os;
+    return os << "SeastoreNodeExtentManager";
   }
 
  private:
@@ -258,21 +212,6 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
   // collection_manager of this cid.
   const coll_t cid;
   CollectionManager &collection_manager;
-
-  // XXX: conditional members by INJECT_EAGAIN
-  bool trigger_eagain() {
-    if (generate_eagain) {
-      double dice = rd();
-      assert(rd.min() == 0);
-      dice /= rd.max();
-      return dice <= p_eagain;
-    } else {
-      return false;
-    }
-  }
-  bool generate_eagain = true;
-  std::random_device rd;
-  double p_eagain;
 };
 
 }

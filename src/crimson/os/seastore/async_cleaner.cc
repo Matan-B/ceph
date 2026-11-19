@@ -643,7 +643,7 @@ JournalTrimmerImpl::trim_alloc()
   ++(shard_stats.trim_alloc_num);
   ++(shard_stats.pending_bg_num);
 
-  return extent_callback->with_transaction_intr(
+  return extent_callback->with_transaction(
     Transaction::src_t::TRIM_ALLOC,
     "trim_alloc",
     CACHE_HINT_NOCACHE,
@@ -656,7 +656,7 @@ JournalTrimmerImpl::trim_alloc()
       t,
       target,
       config.max_backref_bytes_per_cycle
-    ).si_then([this, FNAME, &t](auto trim_alloc_to)
+    ).safe_then([this, FNAME, &t](auto trim_alloc_to)
       -> ExtentCallbackInterface::submit_transaction_direct_iertr::future<>
     {
       DEBUGT("trim_alloc_to={}", t, trim_alloc_to);
@@ -690,7 +690,7 @@ JournalTrimmerImpl::trim_dirty()
 	seastar::stop_iteration>(seastar::stop_iteration::yes);
     }
     ++(shard_stats.pending_bg_num);
-    return extent_callback->with_transaction_intr(
+    return extent_callback->with_transaction(
 	Transaction::src_t::TRIM_DIRTY,
 	"trim_dirty",
 	CACHE_HINT_NOCACHE,
@@ -702,23 +702,23 @@ JournalTrimmerImpl::trim_dirty()
 	  t,
 	  target,
 	  config.rewrite_dirty_bytes_per_trans
-	).si_then([this, FNAME, &t](auto dirty_list) {
+	).safe_then([this, FNAME, &t](auto dirty_list) {
 	  DEBUGT("rewrite {} dirty extents", t, dirty_list.size());
 	  return seastar::do_with(
 	    std::move(dirty_list),
 	    [this, &t](auto &dirty_list)
 	  {
-	    return trans_intr::do_for_each(
+	    return crimson::do_for_each(
 	      dirty_list,
 	      [this, &t](auto &e) {
             return extent_callback->maybe_remove_shadow(t, *e
-            ).si_then([this, &t, e] {
+            ).safe_then([this, &t, e] {
 	        return extent_callback->rewrite_extent(
 		  t, e, INIT_GENERATION, NULL_TIME);
             });
 	    });
 	  });
-	}).si_then([this, &t] {
+	}).safe_then([this, &t] {
 	  return extent_callback->submit_transaction_direct(t);
 	});
     }).safe_then([] {
@@ -1308,7 +1308,7 @@ do_reclaim_space_ret do_reclaim_space(
   transaction_type_t src = is_cold
     ? Transaction::src_t::CLEANER_COLD
     : Transaction::src_t::CLEANER_MAIN;
-  return extent_callback.with_transaction_intr(
+  return extent_callback.with_transaction(
     src,
     "clean_reclaim_space",
     CACHE_HINT_NOCACHE,
@@ -1349,7 +1349,7 @@ do_reclaim_space_ret do_reclaim_space(
 	return seastar::do_with(
 	  std::move(backref_entries),
 	  [&extent_callback, &extents, &t](auto &backref_entries) {
-	  return trans_intr::parallel_for_each(
+	  return ExtentCallbackInterface::get_extents_if_live_iertr::parallel_for_each(
 	    backref_entries,
 	    [&extent_callback, &extents, &t](auto &ent)
 	  {
@@ -1361,7 +1361,7 @@ do_reclaim_space_ret do_reclaim_space(
 	      ent.len);
 	    return extent_callback.get_extents_if_live(
 	      t, ent.type, ent.paddr, ent.laddr, ent.len
-	    ).si_then([FNAME, &extents, &ent, &t](auto list) {
+	    ).safe_then([FNAME, &extents, &ent, &t](auto list) {
 	      if (list.empty()) {
 		TRACET("addr {} dead, skipping", t, ent.paddr);
 	      } else {
@@ -1371,7 +1371,7 @@ do_reclaim_space_ret do_reclaim_space(
 	      }
 	    });
 	  });
-	}).si_then([FNAME, &extents, &extent_callback,
+	}).safe_then([FNAME, &extents, &extent_callback,
 		    &reclaimed, &t, modify_time, target_generation] {
         DEBUGT("reclaim {} extents", t, extents.size());
         // rewrite live extents
@@ -1381,7 +1381,7 @@ do_reclaim_space_ret do_reclaim_space(
 	  return extent_callback.rewrite_extents(
 	    t, extents, target_generation, PLACEMENT_HINT_NULL, modify_time);
       });
-    }).si_then([&extent_callback, &t] {
+    }).safe_then([&extent_callback, &t] {
       return extent_callback.submit_transaction_direct(t);
     });
   }).finally([&shard_stats] {
@@ -1428,7 +1428,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
     [this](auto &weak_read_ret) {
     return repeat_eagain([this, &weak_read_ret] {
       // Note: not tracked by shard_stats_t intentionally.
-      return extent_callback->with_transaction_intr(
+      return extent_callback->with_transaction(
 	  Transaction::src_t::READ,
 	  "retrieve_from_backref_tree",
 	  CACHE_HINT_NOCACHE,
@@ -1437,7 +1437,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
 	  t,
 	  reclaim_state->start_pos,
 	  reclaim_state->end_pos
-	).si_then([this, &t, &weak_read_ret](auto pin_list) {
+	).safe_then([this, &t, &weak_read_ret](auto pin_list) {
 	  if (!pin_list.empty()) {
 	    auto it = pin_list.begin();
 	    auto &first_pin = *it;
@@ -1452,7 +1452,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
 	    t,
 	    reclaim_state->start_pos,
 	    reclaim_state->end_pos
-	  ).si_then([pin_list=std::move(pin_list),
+	  ).safe_then([pin_list=std::move(pin_list),
 		    &weak_read_ret](auto extents) mutable {
 	    weak_read_ret = std::make_pair(std::move(extents), std::move(pin_list));
 	  });

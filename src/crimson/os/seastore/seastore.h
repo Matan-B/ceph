@@ -25,7 +25,6 @@
 
 #include "crimson/os/seastore/device.h"
 #include "crimson/os/seastore/transaction.h"
-#include "crimson/os/seastore/transaction_interruptor.h"
 #include "crimson/os/seastore/onode_manager.h"
 #include "crimson/os/seastore/omap_manager.h"
 #include "crimson/os/seastore/collection_manager.h"
@@ -312,7 +311,7 @@ public:
           assert(src == Transaction::src_t::READ);
           ++(shard_stats.repeat_read_num);
 
-          return transaction_manager->with_transaction_intr(
+          return transaction_manager->with_transaction(
             src,
             tname,
 	    cache_hint_flags,
@@ -322,11 +321,11 @@ public:
             SUBDEBUGT(seastore, "{} cid={} oid={} ...",
                       t, tname, ch->get_cid(), oid);
             return onode_manager->get_onode(t, ch->get_cid(), oid
-            ).si_then([&](auto onode) {
+            ).safe_then([&](auto onode) {
               return seastar::do_with(std::move(onode), [&](auto& onode) {
                 return f(t, *onode);
               });
-            }).si_then([&ret](auto _ret) {
+            }).safe_then([&ret](auto _ret) {
               ret = _ret;
             });
           });

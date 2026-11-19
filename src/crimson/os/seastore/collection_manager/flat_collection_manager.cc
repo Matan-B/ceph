@@ -32,7 +32,7 @@ FlatCollectionManager::mkfs(Transaction &t)
   logger().debug("FlatCollectionManager: {}", __func__);
   return tm.alloc_non_data_extent<FlatCollectionNode>(
     t, laddr_hint_t::create_global_md_hint(), MIN_FLAT_BLOCK_SIZE
-  ).si_then([](auto&& root_extent) {
+  ).safe_then([](auto&& root_extent) {
     coll_root_t coll_root = coll_root_t(
       root_extent->get_laddr(),
       MIN_FLAT_BLOCK_SIZE
@@ -51,7 +51,7 @@ FlatCollectionManager::get_coll_root(const coll_root_t &coll_root, Transaction &
     cc.t,
     coll_root.get_location(),
     coll_root.get_size()
-  ).si_then([](auto maybe_indirect_extent) {
+  ).safe_then([](auto maybe_indirect_extent) {
     assert(!maybe_indirect_extent.is_indirect());
     assert(!maybe_indirect_extent.is_clone);
     return get_root_iertr::make_ready_future<FlatCollectionNodeRef>(
@@ -63,7 +63,7 @@ FlatCollectionManager::get_coll_node_ret
 FlatCollectionManager::get_coll_node(const coll_root_t &coll_root, Transaction &t)
 {
   return get_coll_root(coll_root, t
-  ).si_then([](auto extent) -> CollectionNode::CollectionNodeRef {
+  ).safe_then([](auto extent) -> CollectionNode::CollectionNodeRef {
     return extent;
   });
 }
@@ -74,10 +74,10 @@ FlatCollectionManager::create(coll_root_t &coll_root, Transaction &t,
 {
   logger().debug("FlatCollectionManager: {}", __func__);
   return get_coll_root(coll_root, t
-  ).si_then([=, this, &coll_root, &t] (auto &&extent) {
+  ).safe_then([=, this, &coll_root, &t] (auto &&extent) {
     return extent->create(
       get_coll_context(t), cid, coll_value_t{info.split_bits, info.onode_root}
-    ).si_then([=, this, &coll_root, &t] (auto ret) {
+    ).safe_then([=, this, &coll_root, &t] (auto ret) {
       switch (ret) {
       case FlatCollectionNode::create_result_t::OVERFLOW: {
         logger().debug("FlatCollectionManager: {} overflow!", __func__);
@@ -88,19 +88,19 @@ FlatCollectionManager::create(coll_root_t &coll_root, Transaction &t,
 	assert(new_size < MAX_FLAT_BLOCK_SIZE);
         return tm.alloc_non_data_extent<FlatCollectionNode>(
 	  t, laddr_hint_t::create_global_md_hint(), new_size
-	).si_then([=, this, &coll_root, &t] (auto &&root_extent) {
+	).safe_then([=, this, &coll_root, &t] (auto &&root_extent) {
           coll_root.update(root_extent->get_laddr(), root_extent->get_length());
 
 	  root_extent->decoded = extent->decoded;
 	  return root_extent->create(
 	    get_coll_context(t), cid, coll_value_t{info.split_bits, info.onode_root}
-	  ).si_then([=, this, &t](auto result) {
+	  ).safe_then([=, this, &t](auto result) {
 	    assert(result == FlatCollectionNode::create_result_t::SUCCESS);
 	    return tm.remove(t, extent->get_laddr());
-	  }).si_then([] (auto) {
+	  }).safe_then([] (auto) {
             return create_iertr::make_ready_future<>();
           });
-        }).handle_error_interruptible(
+        }).handle_error(
 	  crimson::ct_error::enospc::assert_failure("unexpected enospc"),
 	  create_iertr::pass_further{}
 	);
@@ -119,7 +119,7 @@ FlatCollectionManager::list(const coll_root_t &coll_root, Transaction &t)
 {
   logger().debug("FlatCollectionManager: {}", __func__);
   return get_coll_root(coll_root, t)
-    .si_then([] (auto extent) {
+    .safe_then([] (auto extent) {
     return extent->list();
   });
 }
@@ -130,7 +130,7 @@ FlatCollectionManager::update(const coll_root_t &coll_root, Transaction &t,
 {
   logger().debug("FlatCollectionManager: {}", __func__);
   return get_coll_root(coll_root, t)
-    .si_then([this, &t, cid, info] (auto extent) {
+    .safe_then([this, &t, cid, info] (auto extent) {
       return extent->update(get_coll_context(t), cid,
                              coll_value_t{info.split_bits, info.onode_root});
   });
@@ -141,7 +141,7 @@ FlatCollectionManager::remove(const coll_root_t &coll_root, Transaction &t,
                               coll_t cid )
 {
   logger().debug("FlatCollectionManager: {}", __func__);
-  return get_coll_root(coll_root, t).si_then([this, &t, cid] (auto extent) {
+  return get_coll_root(coll_root, t).safe_then([this, &t, cid] (auto extent) {
     return extent->remove(get_coll_context(t), cid);
   });
 }

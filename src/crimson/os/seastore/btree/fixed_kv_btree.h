@@ -39,7 +39,6 @@
 
 #include "crimson/os/seastore/cache.h"
 #include "crimson/os/seastore/seastore_types.h"
-#include "crimson/os/seastore/transaction_interruptor.h"
 #include "crimson/os/seastore/btree/btree_types.h"
 #include "crimson/os/seastore/root_block.h"
 #include "crimson/os/seastore/linked_tree_node.h"
@@ -189,13 +188,12 @@ public:
           [c, visitor](auto &ret) mutable {
             return ret.handle_boundary(
               c, visitor
-            ).si_then([&ret] {
+            ).safe_then([&ret] {
               return std::move(ret);
             });
           });
       } else {
-        return iterator_fut(
-          interruptible::ready_future_marker{},
+        return make_ready_fut<iterator_fut>(
           ret);
       }
 
@@ -219,8 +217,7 @@ public:
       // Fast path: still within the same leaf node.
       if (ret.leaf.pos > 0) {
         ret.leaf.pos--;
-        return iterator_fut(
-          interruptible::ready_future_marker{},
+        return make_ready_fut<iterator_fut>(
           ret);
       }
 
@@ -239,7 +236,7 @@ public:
           depth_with_space,
           [&ret](auto depth_with_space) {
           return ret.get_internal(depth_with_space).pos > 0;
-        }).si_then([&ret, c, &li, &ll](auto depth_with_space) {
+        }).safe_then([&ret, c, &li, &ll](auto depth_with_space) {
           assert(depth_with_space <= ret.get_depth()); // must not be begin()
           // Clear intermediate levels that will be re-populated by the descent.
           for (depth_t depth = 2; depth < depth_with_space; ++depth) {
@@ -251,7 +248,7 @@ public:
           // note, cannot result in at_boundary() by construction
           return lookup_depth_range(
             c, ret, depth_with_space - 1, 0, li, ll, nullptr
-          ).si_then([&ret] {
+          ).safe_then([&ret] {
             assert(!ret.at_boundary());
             return std::move(ret);
           });
@@ -320,7 +317,7 @@ public:
 
       auto get_parent = [c](auto &node) {
         return node->get_parent_node(c.trans, c.cache
-        ).si_then([node](auto parent) {
+        ).safe_then([node](auto parent) {
           auto child_meta = node->get_node_meta();
           return std::make_pair(child_meta, std::move(parent));
         });
@@ -330,7 +327,7 @@ public:
           ? get_parent(leaf.node)
           : get_parent(internal[depth-3].node);
 
-      return fut.si_then([FNAME, c, depth, this, &i](auto p) {
+      return fut.safe_then([FNAME, c, depth, this, &i](auto p) {
         auto [child_meta, parent] = std::move(p);
         assert(parent->is_valid());
         assert(parent->get_node_meta().is_parent_of(child_meta));
@@ -483,15 +480,15 @@ public:
         start_from,
         std::move(stop_f),
         [c, this](auto &start_from, auto &stop_f) {
-        return trans_intr::repeat([this, c, &stop_f, &start_from] {
+        return crimson::repeat([this, c, &stop_f, &start_from] {
           if (start_from > get_depth()) {
             return ensure_internal_iertr::template make_ready_future<
               seastar::stop_iteration>(seastar::stop_iteration::yes);
           }
           return ensure_internal(c, start_from
-          ).si_then([&stop_f, &start_from] {
+          ).safe_then([&stop_f, &start_from] {
             return seastar::futurize_invoke(stop_f, start_from);
-          }).si_then([&start_from](bool stop) {
+          }).safe_then([&start_from](bool stop) {
             if (stop) {
               return seastar::stop_iteration::yes;
             } else {
@@ -499,7 +496,7 @@ public:
               return seastar::stop_iteration::no;
             }
           });
-        }).si_then([&start_from] {
+        }).safe_then([&start_from] {
           return start_from;
         });
       });
@@ -529,7 +526,7 @@ public:
           [this](auto depth_with_space) {
           return this->get_internal(depth_with_space).pos + 1 <
               this->get_internal(depth_with_space).node->get_size();
-        }).si_then([c, this, visitor](auto depth_with_space) {
+        }).safe_then([c, this, visitor](auto depth_with_space) {
           if (depth_with_space <= get_depth()) {
             return seastar::do_with(
               [](const internal_node_t &internal) { return internal.begin(); },
@@ -574,7 +571,7 @@ public:
           split_from + 1,
           [this](auto depth) {
           return !this->get_internal(depth).node->at_max_capacity();
-        }).si_then([this](auto depth) {
+        }).safe_then([this](auto depth) {
           assert(depth > 1);
           auto split_from = depth - 1;
           if (split_from >= get_depth()) {
@@ -642,8 +639,7 @@ public:
       }
       if (!root_leaf) {
         c.cache.get_epm().maybe_wake_background();
-        co_await trans_intr::make_interruptible(
-          c.cache.get_epm().wait_background());
+        co_await c.cache.get_epm().wait_background();
       }
     }
     root_leaf->set_size(0);
@@ -745,7 +741,7 @@ public:
       },
       min_depth,
       visitor
-    ).si_then([FNAME, c, min_depth](auto &&ret) {
+    ).safe_then([FNAME, c, min_depth](auto &&ret) {
       SUBTRACET(
         seastore_fixedkv_tree,
         "ret.leaf.pos {}",
@@ -777,12 +773,11 @@ public:
   ) const {
     return lower_bound(
       c, addr
-    ).si_then([c, addr](auto iter) {
+    ).safe_then([c, addr](auto iter) {
       if (!iter.is_end() && iter.get_key() == addr) {
 	return iter.next(c);
       } else {
-	return iterator_fut(
-	  interruptible::ready_future_marker{},
+	return make_ready_fut<iterator_fut>(
 	  iter);
       }
     });
@@ -810,22 +805,19 @@ public:
   {
     return lower_bound(
       c, addr
-    ).si_then([c, addr](auto iter) {
+    ).safe_then([c, addr](auto iter) {
       if (iter.is_begin()) {
-	return iterator_fut(
-	  interruptible::ready_future_marker{},
+	return make_ready_fut<iterator_fut>(
 	  iter);
       } else {
 	return iter.prev(
 	  c
-	).si_then([iter, addr](auto prev) {
+	).safe_then([iter, addr](auto prev) {
 	  if ((prev.get_key() + prev.get_val().len) > addr) {
-	    return iterator_fut(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<iterator_fut>(
 	      prev);
 	  } else {
-	    return iterator_fut(
-	      interruptible::ready_future_marker{},
+	    return make_ready_fut<iterator_fut>(
 	      iter);
 	  }
 	});
@@ -1046,28 +1038,26 @@ public:
     mapped_space_visitor_t *visitor=nullptr) {
     return std::move(
       iter_fut
-    ).si_then([c, visitor, f=std::forward<F>(f)](auto iter) {
+    ).safe_then([c, visitor, f=std::forward<F>(f)](auto iter) {
       return seastar::do_with(
 	iter,
 	std::move(f),
 	[c, visitor](auto &pos, auto &f) {
-	  return trans_intr::repeat(
+	  return crimson::repeat(
 	    [c, visitor, &f, &pos] {
 	      return f(
 		pos
-	      ).si_then([c, visitor, &pos](auto done) {
+	      ).safe_then([c, visitor, &pos](auto done) {
 		if (done == seastar::stop_iteration::yes) {
-		  return iterate_repeat_ret_inner(
-		    interruptible::ready_future_marker{},
+		  return make_ready_fut<iterate_repeat_ret_inner>(
 		    seastar::stop_iteration::yes);
 		} else {
 		  ceph_assert(!pos.is_end());
 		  return pos.next(
 		    c, visitor
-		  ).si_then([&pos](auto next) {
+		  ).safe_then([&pos](auto next) {
 		    pos = next;
-		    return iterate_repeat_ret_inner(
-		      interruptible::ready_future_marker{},
+		    return make_ready_fut<iterate_repeat_ret_inner>(
 		      seastar::stop_iteration::no);
 		  });
 		}
@@ -1129,16 +1119,15 @@ public:
       [this, c, laddr, val, child](auto &ret) {
         return find_insertion(
           c, laddr, ret
-        ).si_then([this, c, laddr, val, &ret, child] {
+        ).safe_then([this, c, laddr, val, &ret, child] {
           if (!ret.at_boundary() && ret.get_key() == laddr) {
-            return insert_ret(
-              interruptible::ready_future_marker{},
+            return make_ready_fut<insert_ret>(
               std::make_pair(ret, false));
           } else {
             ++(get_tree_stats<self_type>(c.trans).num_inserts);
             return handle_split(
               c, ret
-            ).si_then([c, laddr, val, &ret, child] {
+            ).safe_then([c, laddr, val, &ret, child] {
               if (!ret.leaf.node->is_mutable()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
                   c.trans, ret.leaf.node
@@ -1158,8 +1147,7 @@ public:
                   ret.leaf.pos, child, ret.leaf.node->get_size() - 1);
               }
               (void)child;
-              return insert_ret(
-                interruptible::ready_future_marker{},
+              return make_ready_fut<insert_ret>(
                 std::make_pair(ret, true));
             });
           }
@@ -1205,16 +1193,15 @@ public:
       [this, c, laddr, child](auto &ret, auto &src_iter) {
         return find_insertion(
           c, laddr, ret
-        ).si_then([this, c, laddr, &ret, child, &src_iter] {
+        ).safe_then([this, c, laddr, &ret, child, &src_iter] {
           if (!ret.at_boundary() && ret.get_key() == laddr) {
-            return insert_ret(
-              interruptible::ready_future_marker{},
+            return make_ready_fut<insert_ret>(
               std::make_pair(ret, false));
           } else {
             ++(get_tree_stats<self_type>(c.trans).num_inserts);
             return handle_split(
               c, ret
-            ).si_then([c, laddr, &ret, child, &src_iter] {
+            ).safe_then([c, laddr, &ret, child, &src_iter] {
               if (!ret.leaf.node->is_mutable()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
                   c.trans, ret.leaf.node
@@ -1234,8 +1221,7 @@ public:
                   ret.leaf.pos, child, ret.leaf.node->get_size() - 1);
               }
               (void)child;
-              return insert_ret(
-                interruptible::ready_future_marker{},
+              return make_ready_fut<insert_ret>(
                 std::make_pair(ret, true));
             });
           }
@@ -1253,7 +1239,7 @@ public:
     BaseChildNode<leaf_node_t, node_key_t> *child) {
     return lower_bound(
       c, laddr
-    ).si_then([child, this, c, laddr, val](auto iter) {
+    ).safe_then([child, this, c, laddr, val](auto iter) {
       return this->insert(c, iter, laddr, val, child);
     });
   }
@@ -1439,14 +1425,14 @@ public:
 
         return handle_merge(
           c, ret
-        ).si_then([&ret, c] {
+        ).safe_then([&ret, c] {
           if (ret.is_end()) {
             if (ret.is_begin()) {
               assert(ret.leaf.node->get_node_meta().is_root());
               return remove_iertr::make_ready_future<iterator>(std::move(ret));
             } else {
               return ret.handle_boundary(c, nullptr
-              ).si_then([&ret] {
+              ).safe_then([&ret] {
                 return std::move(ret);
               });
             }
@@ -1483,7 +1469,7 @@ public:
       auto eint = e->cast<internal_node_t>();
       return lower_bound(
         c, eint->get_node_meta().begin
-      ).si_then([e, c, eint](auto iter) {
+      ).safe_then([e, c, eint](auto iter) {
         // Note, this check is valid even if iter.is_end()
         LOG_PREFIX(FixedKVTree::init_cached_extent);
         depth_t cand_depth = eint->get_node_meta().depth;
@@ -1508,7 +1494,7 @@ public:
       auto eleaf = e->cast<leaf_node_t>();
       return lower_bound(
         c, eleaf->get_node_meta().begin
-      ).si_then([c, e, eleaf](auto iter) {
+      ).safe_then([c, e, eleaf](auto iter) {
         // Note, this check is valid even if iter.is_end()
         LOG_PREFIX(FixedKVTree::init_cached_extent);
         if (iter.leaf.node == &*eleaf) {
@@ -1534,8 +1520,7 @@ public:
         c.trans,
         *e,
         e->get_type());
-      return init_cached_extent_ret(
-        interruptible::ready_future_marker{},
+      return make_ready_fut<init_cached_extent_ret>(
         true);
     }
   }
@@ -1556,7 +1541,7 @@ public:
     LOG_PREFIX(FixedKVBtree::get_leaf_if_live);
     return lower_bound(
       c, laddr
-    ).si_then([FNAME, c, addr, laddr, len](auto iter) {
+    ).safe_then([FNAME, c, addr, laddr, len](auto iter) {
       if (iter.leaf.node->get_paddr() == addr) {
         SUBTRACET(
           seastore_fixedkv_tree,
@@ -1597,7 +1582,7 @@ public:
     LOG_PREFIX(FixedKVBtree::get_internal_if_live);
     return lower_bound(
       c, laddr
-    ).si_then([FNAME, c, addr, laddr, len](auto iter) {
+    ).safe_then([FNAME, c, addr, laddr, len](auto iter) {
       for (depth_t d = 2; d <= iter.get_depth(); ++d) {
         CachedExtent &node = *iter.get_internal(d).node;
         auto internal_node = node.cast<internal_node_t>();
@@ -1668,8 +1653,7 @@ public:
         } catch (crimson::ct_error::eagain&) {}
         if (!n_fixed_kv_extent) {
           c.cache.get_epm().maybe_wake_background();
-          co_await trans_intr::make_interruptible(
-            c.cache.get_epm().wait_background());
+          co_await c.cache.get_epm().wait_background();
         }
       }
       n_fixed_kv_extent->rewrite(c.trans, fixed_kv_extent, 0, false);
@@ -1739,7 +1723,7 @@ public:
 
     return lower_bound(
       c, laddr, nullptr, depth + 1
-    ).si_then([=, this](auto iter) {
+    ).safe_then([=, this](auto iter) {
       assert(iter.get_depth() >= depth);
       if (depth == iter.get_depth()) {
         SUBTRACET(seastore_fixedkv_tree, "update at root", c.trans);
@@ -1929,7 +1913,7 @@ private:
       offset,
       node_size,
       init_internal
-    ).si_then([FNAME, c, offset, init_internal, depth, begin, end](
+    ).safe_then([FNAME, c, offset, init_internal, depth, begin, end](
               typename internal_node_t::Ref ret) {
       if (unlikely(ret->get_in_extent_checksum()
           != ret->get_last_committed_crc())) {
@@ -1962,8 +1946,7 @@ private:
       ceph_assert(depth == meta.depth);
       ceph_assert(begin == meta.begin);
       ceph_assert(end == meta.end);
-      return get_internal_node_ret(
-        interruptible::ready_future_marker{},
+      return make_ready_fut<get_internal_node_ret>(
         ret);
     });
   }
@@ -2017,7 +2000,7 @@ private:
       offset,
       node_size,
       init_leaf
-    ).si_then([FNAME, c, offset, init_leaf, begin, end]
+    ).safe_then([FNAME, c, offset, init_leaf, begin, end]
       (typename leaf_node_t::Ref ret) {
       if (unlikely(ret->get_in_extent_checksum()
           != ret->get_last_committed_crc())) {
@@ -2049,8 +2032,7 @@ private:
       ceph_assert(1 == meta.depth);
       ceph_assert(begin == meta.begin);
       ceph_assert(end == meta.end);
-      return get_leaf_node_ret(
-        interruptible::ready_future_marker{},
+      return make_ready_fut<get_leaf_node_ret>(
         ret);
     });
   }
@@ -2105,7 +2087,7 @@ private:
     };
 
     if (found) {
-      return fut.si_then(
+      return fut.safe_then(
         [this, c, on_found_internal=std::move(on_found_internal),
         on_found_leaf=std::move(on_found_leaf)](auto root) {
         LOG_PREFIX(FixedKVBtree::lookup_root);
@@ -2133,7 +2115,7 @@ private:
           min_max_t<node_key_t>::min,
           min_max_t<node_key_t>::max,
           std::nullopt
-        ).si_then([on_found=std::move(on_found_internal)](InternalNodeRef root_node) {
+        ).safe_then([on_found=std::move(on_found_internal)](InternalNodeRef root_node) {
           return on_found(root_node);
         });
       } else {
@@ -2143,7 +2125,7 @@ private:
           min_max_t<node_key_t>::min,
           min_max_t<node_key_t>::max,
           std::nullopt
-        ).si_then([on_found=std::move(on_found_leaf)](LeafNodeRef root_node) {
+        ).safe_then([on_found=std::move(on_found_leaf)](LeafNodeRef root_node) {
           return on_found(root_node);
         });
       }
@@ -2200,7 +2182,7 @@ private:
     // and linking the absent child
     if (v.has_child()) {
       return std::move(v.get_child_fut()
-      ).si_then([on_found=std::move(on_found), node_iter, c,
+      ).safe_then([on_found=std::move(on_found), node_iter, c,
                 parent_entry](auto child) {
         LOG_PREFIX(FixedKVBtree::lookup_internal_level);
         SUBTRACET(seastore_fixedkv_tree,
@@ -2232,7 +2214,7 @@ private:
       std::make_optional<node_position_t<internal_node_t>>(
         child_pos.get_parent(),
         child_pos.get_pos())
-    ).si_then([on_found=std::move(on_found)](InternalNodeRef node) {
+    ).safe_then([on_found=std::move(on_found)](InternalNodeRef node) {
       return on_found(node);
     });
   }
@@ -2277,7 +2259,7 @@ private:
     // and linking the absent child
     if (v.has_child()) {
       return std::move(v.get_child_fut()
-      ).si_then([on_found=std::move(on_found), node_iter, c,
+      ).safe_then([on_found=std::move(on_found), node_iter, c,
                 parent_entry](auto child) {
         LOG_PREFIX(FixedKVBtree::lookup_leaf);
         SUBTRACET(seastore_fixedkv_tree,
@@ -2309,7 +2291,7 @@ private:
       std::make_optional<node_position_t<internal_node_t>>(
         child_pos.get_parent(),
         child_pos.get_pos())
-    ).si_then([on_found=std::move(on_found)](LeafNodeRef node) {
+    ).safe_then([on_found=std::move(on_found)](LeafNodeRef node) {
       return on_found(node);
     });
   }
@@ -2344,7 +2326,7 @@ private:
     return seastar::do_with(
       from,
       [c, to, visitor, &iter, &li, &ll](auto &d) {
-	return trans_intr::repeat(
+	return crimson::repeat(
 	  [c, to, visitor, &iter, &li, &ll, &d] {
 	    if (d > to) {
 	      return [&] {
@@ -2363,7 +2345,7 @@ private:
 		    ll,
 		    visitor);
 		}
-	      }().si_then([&d] {
+	      }().safe_then([&d] {
 		--d;
 		return lookup_depth_range_iertr::make_ready_future<
 		  seastar::stop_iteration
@@ -2416,7 +2398,7 @@ private:
       [FNAME, this, visitor, c, min_depth](auto &iter, auto &li, auto &ll) {
 	return lookup_root(
 	  c, iter, visitor
-	).si_then([FNAME, this, visitor, c, &iter, &li, &ll, min_depth] {
+	).safe_then([FNAME, this, visitor, c, &iter, &li, &ll, min_depth] {
 	  if (iter.get_depth() > 1) {
 	    auto &root_entry = *(iter.internal.rbegin());
 	    root_entry.pos = li(*(root_entry.node)).get_offset();
@@ -2435,7 +2417,7 @@ private:
 	    li,
 	    ll,
 	    visitor
-	  ).si_then([c, visitor, &iter, min_depth] {
+	  ).safe_then([c, visitor, &iter, min_depth] {
             // It's only when the lookup is triggered by
             // update_internal_mapping() that min_depth is
             // NOT 1
@@ -2445,7 +2427,7 @@ private:
 	      return lookup_iertr::now();
 	    }
 	  });
-	}).si_then([&iter] {
+	}).safe_then([&iter] {
 	  return std::move(iter);
 	});
       });
@@ -2495,7 +2477,7 @@ private:
       assert(iter.leaf.pos == 0);
       return iter.prev(
         c
-      ).si_then([laddr, &iter](auto p) {
+      ).safe_then([laddr, &iter](auto p) {
         boost::ignore_unused(laddr); // avoid clang warning;
         assert(p.leaf.node->get_node_meta().begin <= laddr);
         assert(p.get_key() < laddr);
@@ -2546,8 +2528,7 @@ private:
         } catch (crimson::ct_error::eagain&) {}
         if (!nroot) {
           c.cache.get_epm().maybe_wake_background();
-          co_await trans_intr::make_interruptible(
-            c.cache.get_epm().wait_background());
+          co_await c.cache.get_epm().wait_background();
         }
       }
       fixed_kv_node_meta_t<node_key_t> meta{
@@ -2590,8 +2571,7 @@ private:
         } catch (crimson::ct_error::eagain&) {}
         if (!left) {
           c.cache.get_epm().maybe_wake_background();
-          co_await trans_intr::make_interruptible(
-            c.cache.get_epm().wait_background());
+          co_await c.cache.get_epm().wait_background();
         }
       }
 
@@ -2714,7 +2694,7 @@ private:
     return seastar::do_with(
       depth_t{1},
       [FNAME, this, c, &iter](auto &to_merge) {
-      return trans_intr::repeat(
+      return crimson::repeat(
         [FNAME, this, c, &iter, &to_merge] {
         SUBTRACET(
           seastore_fixedkv_tree,
@@ -2722,7 +2702,7 @@ private:
           c.trans,
           to_merge);
         return iter.ensure_internal(c, to_merge + 1
-        ).si_then([c, &to_merge, &iter, this, FNAME] {
+        ).safe_then([c, &to_merge, &iter, this, FNAME] {
           auto &parent_pos = iter.get_internal(to_merge + 1);
           auto merge_fut = handle_merge_iertr::now();
           if (to_merge > 1) {
@@ -2733,7 +2713,7 @@ private:
             merge_fut = merge_level(c, to_merge, parent_pos, pos);
           }
 
-          return merge_fut.si_then([FNAME, this, c, &iter, &to_merge] {
+          return merge_fut.safe_then([FNAME, this, c, &iter, &to_merge] {
             ++to_merge;
             auto &pos = iter.get_internal(to_merge);
             if (to_merge == iter.get_depth()) {
@@ -2867,8 +2847,7 @@ private:
           } catch (crimson::ct_error::eagain&) {}
           if (!replacement) {
             c.cache.get_epm().maybe_wake_background();
-            co_await trans_intr::make_interruptible(
-              c.cache.get_epm().wait_background());
+            co_await c.cache.get_epm().wait_background();
           }
         }
 
@@ -2904,8 +2883,7 @@ private:
           } catch (crimson::ct_error::eagain&) {}
           if (!replacement_l) {
             c.cache.get_epm().maybe_wake_background();
-            co_await trans_intr::make_interruptible(
-              c.cache.get_epm().wait_background());
+            co_await c.cache.get_epm().wait_background();
           }
         }
 
@@ -3052,7 +3030,7 @@ auto with_btree(
   F &&f) {
   return cache.get_root(
     c.trans
-  ).si_then([f=std::forward<F>(f)](RootBlockRef croot) mutable {
+  ).safe_then([f=std::forward<F>(f)](RootBlockRef croot) mutable {
     return seastar::do_with(
       tree_type_t(croot),
       [f=std::move(f)](auto &btree) mutable {
@@ -3085,7 +3063,7 @@ auto with_btree_state(
         c,
         [&state, f=std::move(f)](auto &btree) mutable {
         return f(btree, state);
-      }).si_then([&state] {
+      }).safe_then([&state] {
         return seastar::make_ready_future<State>(std::move(state));
       });
     });

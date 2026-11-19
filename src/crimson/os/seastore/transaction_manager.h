@@ -41,6 +41,9 @@ class object_data_handler_test_t;
 namespace crimson::os::seastore {
 class Journal;
 
+/// Retry loop for READ transactions: they restart with eagain when an extent
+/// they accessed was invalidated, see Cache::access_extent(). Writers never
+/// conflict (single writer per shard) and don't need it.
 template <typename F>
 auto repeat_eagain(F &&f) {
   return seastar::do_with(
@@ -48,7 +51,13 @@ auto repeat_eagain(F &&f) {
     [](auto &f)
   {
     return crimson::repeat([&f] {
-      return std::invoke(f
+      // eagain is raised by Cache::access_extent() and is not part of the
+      // errorators of the read paths, widen the future so it can be handled.
+      using fut_t = std::invoke_result_t<decltype(f)&>;
+      using ertr_t = typename fut_t::errorator_type::template extend_ertr<
+        crimson::errorator<crimson::ct_error::eagain>>;
+      typename ertr_t::template future<> fut = std::invoke(f);
+      return std::move(fut
       ).safe_then([] {
         return seastar::stop_iteration::yes;
       }).handle_error(
@@ -435,7 +444,7 @@ public:
   {
     LOG_PREFIX(TransactionManager::read_pins);
     static_assert(is_logical_type(T::TYPE));
-    co_await trans_intr::parallel_for_each(
+    co_await base_iertr::parallel_for_each(
       pins,
       seastar::coroutine::lambda(
 	[this, &t, FNAME, maybe_init=std::move(maybe_init)](auto &pin)
@@ -647,7 +656,7 @@ public:
       } catch(crimson::ct_error::eagain&) {}
       if (!ext) {
         epm->maybe_wake_background();
-        co_await trans_intr::make_interruptible(epm->wait_background());
+        co_await epm->wait_background();
       }
     }
     // user must initialize the logical extent themselves.
@@ -695,7 +704,7 @@ public:
       } catch (crimson::ct_error::eagain&) {}
       if (exts.empty()) {
         epm->maybe_wake_background();
-        co_await trans_intr::make_interruptible(epm->wait_background());
+        co_await epm->wait_background();
       }
     }
     // user must initialize the logical extent themselves
@@ -753,12 +762,12 @@ public:
     LOG_PREFIX(TransactionManager::get_mutable_extent_by_laddr);
     SUBDEBUGT(seastore_tm, "{}~0x{:x} ...", t, laddr, len);
     return get_pin(t, laddr
-    ).si_then([this, &t, len](auto pin) {
+    ).safe_then([this, &t, len](auto pin) {
       ceph_assert(pin.is_data_stable() && !pin.is_zero_reserved());
       ceph_assert(!pin.is_clone());
       ceph_assert(pin.get_length() == len);
       return this->read_pin<T>(t, std::move(pin));
-    }).si_then([this, &t, FNAME](auto maybe_indirect_extent) {
+    }).safe_then([this, &t, FNAME](auto maybe_indirect_extent) {
       assert(!maybe_indirect_extent.is_indirect());
       assert(!maybe_indirect_extent.is_clone);
       auto ext = get_mutable_extent(
@@ -898,7 +907,7 @@ public:
     T &src_extent) {
     auto extent = co_await alloc_non_data_extent<T>(
       t, laddr_hint_t::create_as_fixed(dst_key), length
-    ).handle_error_interruptible(
+    ).handle_error(
       move_region_iertr::pass_further(),
       crimson::ct_error::assert_all("invalid error"));
     extent->rewrite(t, src_extent, 0, true);
@@ -934,15 +943,15 @@ public:
                t, hint, num, len);
      return seastar::do_with(std::vector<TCachedExtentRef<T>>(),
        [this, &t, hint, len, num, FNAME](auto &extents) {
-       return trans_intr::do_for_each(
-                       boost::make_counting_iterator(0),
+       return crimson::do_for_each(
+                        boost::make_counting_iterator(0),
                        boost::make_counting_iterator(num),
          [this, &t, len, hint, &extents] (auto i) {
-         return alloc_non_data_extent<T>(t, hint, len).si_then(
+         return alloc_non_data_extent<T>(t, hint, len).safe_then(
            [&extents](auto &&node) {
            extents.push_back(node);
          });
-       }).si_then([&extents, &t, FNAME] {
+       }).safe_then([&extents, &t, FNAME] {
          SUBDEBUGT(seastore_tm, "allocated {} extents", t, extents.size());
          return alloc_extents_iertr::make_ready_future
                 <std::vector<TCachedExtentRef<T>>>(std::move(extents));
@@ -1069,7 +1078,7 @@ public:
     }
     auto &extent = static_cast<LogicalChildNode&>(e);
     auto cursor = co_await lba_manager->get_cursor(t, extent
-    ).handle_error_interruptible(
+    ).handle_error(
       crimson::ct_error::input_output_error::pass_further{},
       crimson::ct_error::enoent::assert_failure("unexpected enoent")
     );
@@ -1119,9 +1128,9 @@ public:
     const std::string &key) {
     return cache->get_root(
       t
-    ).si_then([&t, this](auto root) {
+    ).safe_then([&t, this](auto root) {
       return read_extent<RootMetaBlock>(t, root->root.meta);
-    }).si_then([key, &t](auto maybe_indirect_extent) {
+    }).safe_then([key, &t](auto maybe_indirect_extent) {
       LOG_PREFIX(TransactionManager::read_root_meta);
       assert(!maybe_indirect_extent.is_indirect());
       assert(!maybe_indirect_extent.is_clone);
@@ -1135,7 +1144,7 @@ public:
         SUBDEBUGT(seastore_tm, "{} -> {}", t, key, iter->second);
 	return seastar::make_ready_future<read_root_meta_bare>(iter->second);
       }
-    }).handle_error_interruptible(
+    }).handle_error(
       crimson::ct_error::input_output_error::pass_further{},
       crimson::ct_error::assert_all("unexpected error!")
     );
@@ -1151,16 +1160,16 @@ public:
   init_root_meta_ret init_root_meta(Transaction &t) {
     return alloc_non_data_extent<RootMetaBlock>(
       t, laddr_hint_t::create_as_fixed(L_ADDR_MIN), RootMetaBlock::SIZE
-    ).si_then([this, &t](auto meta) {
+    ).safe_then([this, &t](auto meta) {
       meta->set_meta(RootMetaBlock::meta_t{});
       return cache->get_root(t
-      ).si_then([this, &t, meta](auto root) {
+      ).safe_then([this, &t, meta](auto root) {
 	auto mroot = cache->duplicate_for_write(
 	  t, root)->template cast<RootBlock>();
 	mroot->root.meta = meta->get_laddr();
 	return seastar::now();
       });
-    }).handle_error_interruptible(
+    }).handle_error(
       crimson::ct_error::input_output_error::pass_further{},
       crimson::ct_error::assert_all("unexpected error!")
     );
@@ -1181,9 +1190,9 @@ public:
     SUBDEBUGT(seastore_tm, "seastore_tm, {} -> {} ...", t, key, value);
     return cache->get_root(
       t
-    ).si_then([this, &t](RootBlockRef root) {
+    ).safe_then([this, &t](RootBlockRef root) {
       return read_extent<RootMetaBlock>(t, root->root.meta);
-    }).si_then([this, key, value, &t](auto maybe_indirect_extent) {
+    }).safe_then([this, key, value, &t](auto maybe_indirect_extent) {
       assert(!maybe_indirect_extent.is_indirect());
       assert(!maybe_indirect_extent.is_clone);
       auto& mblock = maybe_indirect_extent.extent;
@@ -1195,7 +1204,7 @@ public:
 
       mblock->set_meta(meta);
       return seastar::now();
-    }).handle_error_interruptible(
+    }).handle_error(
       crimson::ct_error::input_output_error::pass_further{},
       crimson::ct_error::assert_all("unexpected error!")
     );
@@ -1209,7 +1218,7 @@ public:
   using read_meta_onode_root_iertr = base_iertr;
   using read_meta_onode_root_ret = read_meta_onode_root_iertr::future<laddr_t>;
   read_meta_onode_root_ret read_meta_onode_root(Transaction &t) {
-    return cache->get_root(t).si_then([&t](auto croot) {
+    return cache->get_root(t).safe_then([&t](auto croot) {
       LOG_PREFIX(TransactionManager::read_meta_onode_root);
       laddr_t ret = croot->get_root().meta_onode_root;
       SUBTRACET(seastore_tm, "{}", t, ret);
@@ -1240,7 +1249,7 @@ public:
   using read_collection_root_ret = read_collection_root_iertr::future<
     coll_root_t>;
   read_collection_root_ret read_collection_root(Transaction &t) {
-    return cache->get_root(t).si_then([&t](auto croot) {
+    return cache->get_root(t).safe_then([&t](auto croot) {
       LOG_PREFIX(TransactionManager::read_collection_root);
       auto ret = croot->get_root().collection_root.get();
       SUBTRACET(seastore_tm, "{}~0x{:x}",
@@ -1301,7 +1310,7 @@ public:
       auto orig_laddr = mapping.get_key();
       auto pos = co_await remove(
 	t, std::move(mapping)
-      ).handle_error_interruptible(
+      ).handle_error(
 	remap_mappings_iertr::pass_further{},
 	crimson::ct_error::assert_all("unexpected error")
       );
@@ -1313,7 +1322,7 @@ public:
 	  laddr,
 	  remap.len,
           type
-	).handle_error_interruptible(
+	).handle_error(
 	  remap_mappings_iertr::pass_further{},
 	  crimson::ct_error::assert_all("unexpected error")
 	);
@@ -1367,13 +1376,13 @@ public:
 	  std::array{
 	    remap_entry_t{0, offset1},
 	    remap_entry_t{offset2, len2}}
-	).si_then([](auto ret) {
+	).safe_then([](auto ret) {
 	  assert(ret.size() == 2);
 	  return std::move(ret.back());
 	});
       } else {
 	return cut_mapping<T>(t, laddr, std::move(mapping), true
-	).si_then([](auto mapping) {
+	).safe_then([](auto mapping) {
 	  return mapping.next();
 	});
       }
@@ -1385,7 +1394,7 @@ public:
 	update_hit_ratio(t, mapping.get_val().get_device_id());
       }
       return remove(t, std::move(mapping)
-      ).handle_error_interruptible(
+      ).handle_error(
 	punch_mappings_iertr::pass_further{},
 	crimson::ct_error::assert_all("impossible")
       );
@@ -1426,7 +1435,7 @@ public:
       t,
       std::move(mapping),
       std::array{remap_entry_t{offset, len}}
-    ).si_then([] (auto ret) {
+    ).safe_then([] (auto ret) {
       assert(ret.size() == 1);
       return std::move(ret.back());
     });
@@ -1781,7 +1790,7 @@ private:
       t,
       pin.get_effective_cursor_ref(),
       std::vector<remap_entry_t>(remaps.begin(), remaps.end())
-    ).handle_error_interruptible(
+    ).handle_error(
       remap_pin_iertr::pass_further{},
       crimson::ct_error::assert_all(
 	"TransactionManager::remap_pin hit invalid error"
@@ -1809,11 +1818,11 @@ private:
       co_await lba_manager->update_mapping_refcount(
 	t, pin.direct_cursor, 1);
     }
-    co_await trans_intr::parallel_for_each(
+    co_await base_iertr::parallel_for_each(
       ret,
       [](auto &remapped_mapping) {
 	return remapped_mapping.refresh(
-	).si_then([&remapped_mapping](auto mapping) {
+	).safe_then([&remapped_mapping](auto mapping) {
 	  remapped_mapping = std::move(mapping);
 	});
       });

@@ -40,16 +40,12 @@ class PerfTree : public TMTestState {
                           *tm, coll_t::meta(), *collection_manager)));
         {
           auto t = create_mutate_transaction();
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->bootstrap(tr);
-          }).unsafe_get();
+          tree->bootstrap(*t).unsafe_get();
           submit_transaction(std::move(t));
         }
         {
           auto t = create_mutate_transaction();
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->insert(tr);
-          }).unsafe_get();
+          tree->insert(*t).unsafe_get();
           auto start_time = mono_clock::now();
           submit_transaction(std::move(t));
           std::chrono::duration<double> duration = mono_clock::now() - start_time;
@@ -58,30 +54,20 @@ class PerfTree : public TMTestState {
         {
           // Note: create_weak_transaction() can also work, but too slow.
           auto t = create_read_transaction();
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->get_stats(tr);
-          }).unsafe_get();
+          tree->get_stats(*t).unsafe_get();
 
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->validate(tr);
-          }).unsafe_get();
+          tree->validate(*t).unsafe_get();
         }
         {
           auto t = create_mutate_transaction();
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->erase(tr, kvs.size() * erase_ratio);
-          }).unsafe_get();
+          tree->erase(*t, kvs.size() * erase_ratio).unsafe_get();
           submit_transaction(std::move(t));
         }
         {
           auto t = create_read_transaction();
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->get_stats(tr);
-          }).unsafe_get();
+          tree->get_stats(*t).unsafe_get();
 
-          with_trans_intr(*t, [&](auto &tr){
-            return tree->validate(tr);
-          }).unsafe_get();
+          tree->validate(*t).unsafe_get();
         }
         tree.reset();
       });

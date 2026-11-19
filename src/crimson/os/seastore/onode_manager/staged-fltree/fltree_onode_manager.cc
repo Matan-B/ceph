@@ -158,7 +158,7 @@ FLTreeOnodeManager::contains_onode_ret FLTreeOnodeManager::contains_onode(
   const ghobject_t &hoid)
 {
   return collection_exists(trans, cid
-  ).si_then([this, &trans, &cid, &hoid](bool exists) {
+  ).safe_then([this, &trans, &cid, &hoid](bool exists) {
     if (!exists) {
       return contains_onode_iertr::make_ready_future<bool>(false);
     }
@@ -173,14 +173,14 @@ FLTreeOnodeManager::get_onode_ret FLTreeOnodeManager::get_onode(
 {
   LOG_PREFIX(FLTreeOnodeManager::get_onode);
   return collection_exists(trans, cid
-  ).si_then([this, &trans, &cid, &hoid, FNAME](bool exists) -> get_onode_ret {
+  ).safe_then([this, &trans, &cid, &hoid, FNAME](bool exists) -> get_onode_ret {
     if (!exists) {
       DEBUGT("no collection for {}", trans, cid);
       return crimson::ct_error::enoent::make();
     }
     return tree_for(cid).find(
       trans, hoid
-    ).si_then([&hoid, &trans, FNAME](auto cursor) -> get_onode_ret {
+    ).safe_then([&hoid, &trans, FNAME](auto cursor) -> get_onode_ret {
       if (cursor.is_end()) {
         DEBUGT("no entry for {}", trans, hoid);
         return crimson::ct_error::enoent::make();
@@ -279,14 +279,14 @@ FLTreeOnodeManager::get_or_create_onodes(
     std::vector<OnodeRef>(),
     [this, &hoids, &trans, &cid](auto &ret) {
       ret.reserve(hoids.size());
-      return trans_intr::do_for_each(
+      return crimson::do_for_each(
         hoids,
         [this, &trans, &cid, &ret](auto &hoid) {
           return get_or_create_onode(trans, cid, hoid
-          ).si_then([&ret](auto &&onoderef) {
+          ).safe_then([&ret](auto &&onoderef) {
             ret.push_back(std::move(onoderef));
           });
-        }).si_then([&ret] {
+        }).safe_then([&ret] {
           return std::move(ret);
         });
     });

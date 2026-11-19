@@ -93,9 +93,7 @@ SegmentedOolWriter::do_write(
     DEBUGT("{} extents={} wait ...",
            t, segment_allocator.get_name(),
            extents.size());
-    return trans_intr::make_interruptible(
-      record_submitter.wait_available()
-    ).si_then([this, &t, &extents] {
+    return record_submitter.wait_available().safe_then([this, &t, &extents] {
       return do_write(t, extents);
     });
   }
@@ -124,12 +122,10 @@ SegmentedOolWriter::do_write(
             t, std::move(record), std::move(pending_extents),
             true/* with_atomic_roll_segment */);
       }
-      return trans_intr::make_interruptible(
-        record_submitter.roll_segment(
+      return record_submitter.roll_segment(
         ).safe_then([fut_write=std::move(fut_write)]() mutable {
           return std::move(fut_write);
-        })
-      ).si_then([this, &t, &extents] {
+        }).safe_then([this, &t, &extents] {
         return do_write(t, extents);
       });
     }
@@ -159,9 +155,7 @@ SegmentedOolWriter::do_write(
       DEBUGT("{} extents={} submit {} extents ...",
              t, segment_allocator.get_name(),
              extents.size(), pending_extents.size());
-      return trans_intr::make_interruptible(
-        write_record(t, std::move(record), std::move(pending_extents))
-      ).si_then([this, &t, &extents] {
+      return write_record(t, std::move(record), std::move(pending_extents)).safe_then([this, &t, &extents] {
         if (!extents.empty()) {
           return do_write(t, extents);
         } else {
@@ -177,8 +171,7 @@ SegmentedOolWriter::do_write(
          t, segment_allocator.get_name(),
          num_extents);
   assert(num_extents > 0);
-  return trans_intr::make_interruptible(
-    write_record(t, std::move(record), std::move(pending_extents)));
+  return write_record(t, std::move(record), std::move(pending_extents));
 }
 
 SegmentedOolWriter::alloc_write_iertr::future<>
@@ -197,8 +190,7 @@ SegmentedOolWriter::alloc_write_ool_extents(
       size += e->get_length();
     }
     try {
-      co_await trans_intr::make_interruptible(
-        token_bucket.get(size));
+      co_await token_bucket.get(size);
       co_await do_write(t, extents);
     } catch (...) {
       token_bucket.release(size);
@@ -577,7 +569,7 @@ ExtentPlacementManager::alloc_paddr_iertr::future<>
 ExtentPlacementManager::write_delayed_ool_extents(
     Transaction& t,
     extents_by_writer_t& alloc_map) {
-  return trans_intr::do_for_each(alloc_map, [&t](auto& p) {
+  return crimson::do_for_each(alloc_map, [&t](auto& p) {
     auto writer = p.first;
     auto& extents = p.second;
 #ifndef NDEBUG
@@ -612,7 +604,7 @@ ExtentPlacementManager::write_preallocated_ool_extents(
           extent->get_rewrite_generation());
       alloc_map[writer_ptr].emplace_back(extent);
     }
-    return trans_intr::do_for_each(alloc_map, [&t](auto& p) {
+    return crimson::do_for_each(alloc_map, [&t](auto& p) {
       auto writer = p.first;
       auto& extents = p.second;
       assert(writer->get_type() == backend_type_t::RANDOM_BLOCK);
@@ -1288,8 +1280,7 @@ RandomBlockOolWriter::alloc_write_ool_extents(
       size += extent->get_length();
     }
     try {
-      co_await trans_intr::make_interruptible(
-        token_bucket.get(size));
+      co_await token_bucket.get(size);
       // A writer is never invalidated (single writer per shard), so the
       // extents of an in-flight OOL write are never freed under it.
       co_await do_write(t, extents);
@@ -1387,8 +1378,7 @@ RandomBlockOolWriter::do_write(
     }
   }
 
-  return trans_intr::make_interruptible(
-    seastar::do_with(std::move(writes),
+  return seastar::do_with(std::move(writes),
       [&t, this](auto& writes) {
       auto& stats = t.get_ool_write_stats();
       stats.num_records += writes.size();
@@ -1403,8 +1393,7 @@ RandomBlockOolWriter::do_write(
             "Invalid error when writing record")
         );
       });
-    })
-  );
+    });
 }
 
 }

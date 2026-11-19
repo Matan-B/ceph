@@ -19,7 +19,6 @@
 #include "crimson/os/seastore/segment_manager_group.h"
 #include "crimson/os/seastore/randomblock_manager_group.h"
 #include "crimson/os/seastore/transaction.h"
-#include "crimson/os/seastore/transaction_interruptor.h"
 #include "crimson/os/seastore/segment_seq_allocator.h"
 
 namespace crimson::os::seastore {
@@ -307,14 +306,17 @@ public:
     cache_hint_t cache_hint = CACHE_HINT_TOUCH,
     bool is_weak=false) = 0;
 
-  /// Creates empty transaction with interruptible context
+  /// Creates a transaction and runs f with it. Writing transactions hold the
+  /// shard writer lock, see do_with_transaction(). A READ transaction
+  /// may fail with eagain when it must restart (Cache::access_extent()), so
+  /// callers wrap it in repeat_eagain().
   template <typename Func>
-  auto with_transaction_intr(
+  auto with_transaction(
       Transaction::src_t src,
       const char* name,
       cache_hint_t cache_hint,
       Func &&f) {
-    return do_with_transaction_intr<Func, false>(
+    return do_with_transaction<Func, false>(
         src, name, cache_hint, std::forward<Func>(f));
   }
 
@@ -323,12 +325,9 @@ public:
       const char* name,
       cache_hint_t cache_hint,
       Func &&f) {
-    return do_with_transaction_intr<Func, true>(
-        Transaction::src_t::READ, name, cache_hint, std::forward<Func>(f)
-    ).handle_error(
-      crimson::ct_error::eagain::assert_failure("unexpected eagain"),
-      crimson::ct_error::pass_further_all{}
-    );
+    // weak transactions are not validated, they never restart
+    return do_with_transaction<Func, true>(
+        Transaction::src_t::READ, name, cache_hint, std::forward<Func>(f));
   }
 
   /// See Cache::get_next_dirty_extents
@@ -450,7 +449,7 @@ public:
 
 private:
   template <typename Func, bool IsWeak>
-  auto do_with_transaction_intr(
+  auto do_with_transaction(
       Transaction::src_t src,
       const char* name,
       cache_hint_t cache_hint,
@@ -460,12 +459,7 @@ private:
       return seastar::do_with(
         create_transaction(src, name, cache_hint, IsWeak),
         [f=std::move(f)](auto &ref_t) mutable {
-          return with_trans_intr(
-            *ref_t,
-            [f=std::move(f)](auto& t) mutable {
-              return f(t);
-            }
-          );
+          return f(*ref_t);
         }
       );
     };

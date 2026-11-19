@@ -21,17 +21,11 @@ NodeExtentManagerURef NodeExtentManager::create_seastore(
     TransactionManager &tm,
     coll_t cid,
     CollectionManager &collection_manager,
-    laddr_t min_laddr, double p_eagain)
+    laddr_t min_laddr)
 {
-  if (p_eagain == 0.0) {
-    return NodeExtentManagerURef(
-        new SeastoreNodeExtentManager<false>(
-            tm, min_laddr, p_eagain, cid, collection_manager));
-  } else {
-    return NodeExtentManagerURef(
-        new SeastoreNodeExtentManager<true>(
-            tm, min_laddr, p_eagain, cid, collection_manager));
-  }
+  return NodeExtentManagerURef(
+      new SeastoreNodeExtentManager(
+          tm, min_laddr, cid, collection_manager));
 }
 
 }

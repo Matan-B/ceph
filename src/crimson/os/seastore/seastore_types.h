@@ -11,6 +11,8 @@
 #include <vector>
 #include <boost/core/ignore_unused.hpp>
 
+#include <seastar/core/future.hh>
+#include <seastar/core/future-util.hh>
 #include <seastar/core/lowres_clock.hh>
 
 #include "include/byteorder.h"
@@ -36,6 +38,34 @@ namespace crimson::os::seastore {
 
 using base_ertr = crimson::errorator<
   crimson::ct_error::input_output_error>;
+
+/*
+ * Nothing interrupts a transaction any more.
+ *
+ * Transactions used to run under an interruptor (TransactionConflictCondition)
+ * whose only trigger was a conflict: another transaction invalidated
+ * something this one had read, and the next continuation aborted it so it
+ * could be retried. With a single writer per shard (see
+ * TransactionManager::writer_lock) a writer can't conflict. A READ
+ * transaction still can, but it restarts explicitly: Cache::access_extent()
+ * fails it with eagain at its next cache access, and repeat_eagain() retries
+ * it. A transaction otherwise runs to completion, or fails with an error.
+ *
+ * So plain errorated futures are used. The *_iertr names are kept to avoid
+ * renaming every signature.
+ */
+template <typename E>
+using trans_iertr = E;
+
+using base_iertr = base_ertr;
+
+/// A ready errorated future of type FutT, replaces
+/// interruptible::ready_future_marker{} constructions.
+template <typename FutT, typename... A>
+FutT make_ready_fut(A&&... a) {
+  return FutT::errorator_type::template make_ready_future<
+    typename FutT::value_type>(std::forward<A>(a)...);
+}
 
 class cache_hint_t {
   enum hint_t {

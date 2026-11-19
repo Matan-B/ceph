@@ -93,7 +93,7 @@ base_iertr::future<LBAMapping> LBAMapping::next()
     [ctx](auto &btree, auto &mapping) mutable {
     auto &cursor = mapping.get_effective_cursor();
     auto iter = btree.make_partial_iter(ctx, cursor);
-    return iter.next(ctx).si_then([ctx, &mapping](auto iter) {
+    return iter.next(ctx).safe_then([ctx, &mapping](auto iter) {
       if (!iter.is_end() && iter.get_val().pladdr.is_laddr()) {
 	mapping = LBAMapping::create_indirect(nullptr, iter.get_cursor(ctx));
       } else {
@@ -118,12 +118,12 @@ base_iertr::future<LBAMapping> LBAMapping::refresh()
 	return direct_cursor->refresh();
       }
       return base_iertr::now();
-    }).si_then([&indirect_cursor] {
+    }).safe_then([&indirect_cursor] {
       if (indirect_cursor) {
 	return indirect_cursor->refresh();
       }
       return base_iertr::now();
-    }).si_then([&direct_cursor, &indirect_cursor] {
+    }).safe_then([&direct_cursor, &indirect_cursor] {
       return LBAMapping(direct_cursor, indirect_cursor);
     });
   });

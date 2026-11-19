@@ -400,7 +400,7 @@ public:
           continue;
         }
         promote_size += extent->get_length();
-        co_await trans_intr::make_interruptible(extent->wait_io());
+        co_await extent->wait_io();
         co_await ecb->promote_extent(t, extent);
         it++;
       }
@@ -417,7 +417,7 @@ public:
   seastar::future<> promote() {
     assert(enabled());
     std::list<CachedExtentRef> promoting_extents;
-    co_await ecb->with_transaction_intr(
+    co_await ecb->with_transaction(
       Transaction::src_t::PROMOTE,
 	"promote", cache_hint_t::get_nocache(),
       [this, &promoting_extents](auto &t) {

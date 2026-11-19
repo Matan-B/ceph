@@ -101,7 +101,7 @@ class Btree {
       assert(!is_end());
       auto this_obj = *this;
       return p_cursor->get_next(p_tree->get_context(t)
-      ).si_then([this_obj] (Ref<tree_cursor_t> next_cursor) {
+      ).safe_then([this_obj] (Ref<tree_cursor_t> next_cursor) {
         next_cursor->assert_next_to(
             *this_obj.p_cursor, this_obj.p_tree->value_builder.get_header_magic());
         auto ret = Cursor{this_obj.p_tree, next_cursor};
@@ -115,7 +115,7 @@ class Btree {
       assert(!is_end());
       auto this_obj = *this;
       return p_cursor->erase<FORCE_MERGE>(p_tree->get_context(t), true
-      ).si_then([this_obj, this] (Ref<tree_cursor_t> next_cursor) {
+      ).safe_then([this_obj, this] (Ref<tree_cursor_t> next_cursor) {
         assert(p_cursor->is_invalid());
         if (next_cursor) {
           assert(!next_cursor->is_end());
@@ -162,17 +162,17 @@ class Btree {
    */
 
   eagain_ifuture<Cursor> begin(Transaction& t) {
-    return get_root(t).si_then([this, &t](auto root) {
+    return get_root(t).safe_then([this, &t](auto root) {
       return root->lookup_smallest(get_context(t));
-    }).si_then([this](auto cursor) {
+    }).safe_then([this](auto cursor) {
       return Cursor{this, cursor};
     });
   }
 
   eagain_ifuture<Cursor> last(Transaction& t) {
-    return get_root(t).si_then([this, &t](auto root) {
+    return get_root(t).safe_then([this, &t](auto root) {
       return root->lookup_largest(get_context(t));
-    }).si_then([this](auto cursor) {
+    }).safe_then([this](auto cursor) {
       return Cursor(this, cursor);
     });
   }
@@ -185,10 +185,10 @@ class Btree {
     return seastar::do_with(
       key_hobj_t{obj},
       [this, &t](auto& key) -> eagain_ifuture<bool> {
-        return get_root(t).si_then([this, &t, &key](auto root) {
+        return get_root(t).safe_then([this, &t, &key](auto root) {
           // TODO: improve lower_bound()
           return root->lower_bound(get_context(t), key);
-        }).si_then([](auto result) {
+        }).safe_then([](auto result) {
           return MatchKindBS::EQ == result.match();
         });
       }
@@ -199,10 +199,10 @@ class Btree {
     return seastar::do_with(
       key_hobj_t{obj},
       [this, &t](auto& key) -> eagain_ifuture<Cursor> {
-        return get_root(t).si_then([this, &t, &key](auto root) {
+        return get_root(t).safe_then([this, &t, &key](auto root) {
           // TODO: improve lower_bound()
           return root->lower_bound(get_context(t), key);
-        }).si_then([this](auto result) {
+        }).safe_then([this](auto result) {
           if (result.match() == MatchKindBS::EQ) {
             return Cursor(this, result.p_cursor);
           } else {
@@ -224,9 +224,9 @@ class Btree {
     return seastar::do_with(
       key_hobj_t{obj},
       [this, &t](auto& key) -> eagain_ifuture<Cursor> {
-        return get_root(t).si_then([this, &t, &key](auto root) {
+        return get_root(t).safe_then([this, &t, &key](auto root) {
           return root->lower_bound(get_context(t), key);
-        }).si_then([this](auto result) {
+        }).safe_then([this](auto result) {
           return Cursor(this, result.p_cursor);
         });
       }
@@ -269,9 +269,9 @@ class Btree {
       key_hobj_t{obj},
       [this, &t, vconf](auto& key) -> eagain_ifuture<std::pair<Cursor, bool>> {
         ceph_assert(key.is_valid());
-        return get_root(t).si_then([this, &t, &key, vconf](auto root) {
+        return get_root(t).safe_then([this, &t, &key, vconf](auto root) {
           return root->insert(get_context(t), key, vconf, std::move(root));
-        }).si_then([this](auto ret) {
+        }).safe_then([this](auto ret) {
           auto& [cursor, success] = ret;
           return std::make_pair(Cursor(this, cursor), success);
         });
@@ -283,7 +283,7 @@ class Btree {
     return seastar::do_with(
       key_hobj_t{obj},
       [this, &t](auto& key) -> eagain_ifuture<std::size_t> {
-        return get_root(t).si_then([this, &t, &key](auto root) {
+        return get_root(t).safe_then([this, &t, &key](auto root) {
           return root->erase(get_context(t), key, std::move(root));
         });
       }
@@ -298,7 +298,7 @@ class Btree {
     assert(value.is_tracked());
     auto ref_cursor = value.p_cursor;
     return ref_cursor->erase(get_context(t), false
-    ).si_then([ref_cursor] (auto next_cursor) {
+    ).safe_then([ref_cursor] (auto next_cursor) {
       assert(ref_cursor->is_invalid());
       assert(!next_cursor);
     });
@@ -309,16 +309,16 @@ class Btree {
    */
 
   eagain_ifuture<size_t> height(Transaction& t) {
-    return get_root(t).si_then([](auto root) {
+    return get_root(t).safe_then([](auto root) {
       return size_t(root->level() + 1);
     });
   }
 
   eagain_ifuture<tree_stats_t> get_stats_slow(Transaction& t) {
-    return get_root(t).si_then([this, &t](auto root) {
+    return get_root(t).safe_then([this, &t](auto root) {
       unsigned height = root->level() + 1;
       return root->get_tree_stats(get_context(t)
-      ).si_then([height](auto stats) {
+      ).safe_then([height](auto stats) {
         stats.height = height;
         return seastar::make_ready_future<tree_stats_t>(stats);
       });
@@ -353,7 +353,7 @@ class Btree {
     // In some unit tests, parts of the tree are stubbed out that they
     // should not be loaded from NodeExtentManager.
     return from.get_root(t_from
-    ).si_then([this, &t](auto root_from) {
+    ).safe_then([this, &t](auto root_from) {
       return root_from->test_clone_root(get_context(t), *root_tracker);
     });
   }

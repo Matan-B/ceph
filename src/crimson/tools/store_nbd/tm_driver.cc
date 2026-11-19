@@ -22,23 +22,23 @@ seastar::future<> TMDriver::write(
   assert((ptr.length() % device->get_block_size()) == 0);
   return seastar::do_with(ptr, [this, offset](auto& ptr) {
     return repeat_eagain([this, offset, &ptr] {
-      return tm->with_transaction_intr(
+      return tm->with_transaction(
         Transaction::src_t::MUTATE,
         "write",
 	CACHE_HINT_TOUCH,
         [this, offset, &ptr](auto& t)
       {
         return tm->remove(t, laddr_t::from_byte_offset(offset)
-        ).discard_result().handle_error_interruptible(
+        ).discard_result().handle_error(
           crimson::ct_error::enoent::handle([](auto) { return seastar::now(); }),
           crimson::ct_error::pass_further_all{}
-        ).si_then([this, offset, &t, &ptr] {
+        ).safe_then([this, offset, &t, &ptr] {
           logger().debug("dec_ref complete");
           return tm->alloc_data_extents<TestBlock>(
 	    t,
 	    laddr_hint_t::create_as_fixed(laddr_t::from_byte_offset(offset)),
 	    ptr.length());
-        }).si_then([this, offset, &t, &ptr](auto extents) mutable {
+        }).safe_then([this, offset, &t, &ptr](auto extents) mutable {
 	  boost::ignore_unused(offset);  // avoid clang warning;
 	  auto off = offset;
 	  auto left = ptr.length();
@@ -72,10 +72,10 @@ TMDriver::read_extents_ret TMDriver::read_extents(
     [this, &t, offset, length](auto &pins, auto &ret) {
       return tm->get_pins(
 	t, offset, length
-      ).si_then([this, &t, &pins, &ret](auto _pins) {
+      ).safe_then([this, &t, &pins, &ret](auto _pins) {
 	_pins.swap(pins);
 	logger().debug("read_extents: mappings {}", pins);
-	return trans_intr::do_for_each(
+	return crimson::do_for_each(
 	  pins.begin(),
 	  pins.end(),
 	  [this, &t, &ret](auto &&pin) {
@@ -83,7 +83,7 @@ TMDriver::read_extents_ret TMDriver::read_extents(
 	    return tm->read_pin<TestBlock>(
 	      t,
 	      std::move(pin)
-	    ).si_then([&ret](auto maybe_indirect_extent) mutable {
+	    ).safe_then([&ret](auto maybe_indirect_extent) mutable {
 	      assert(!maybe_indirect_extent.is_indirect());
 	      assert(!maybe_indirect_extent.is_clone);
 	      auto& e = maybe_indirect_extent.extent;
@@ -93,7 +93,7 @@ TMDriver::read_extents_ret TMDriver::read_extents(
 		*e);
 	      return seastar::now();
 	    });
-	  }).si_then([&ret] {
+	  }).safe_then([&ret] {
 	    return std::move(ret);
 	  });
       });
@@ -110,14 +110,14 @@ seastar::future<bufferlist> TMDriver::read(
   auto blptrret = std::make_unique<bufferlist>();
   auto &blret = *blptrret;
   return repeat_eagain([=, &blret, this] {
-    return tm->with_transaction_intr(
+    return tm->with_transaction(
       Transaction::src_t::READ,
       "read",
       CACHE_HINT_TOUCH,
       [=, &blret, this](auto& t)
     {
       return read_extents(t, laddr_t::from_byte_offset(offset), size
-      ).si_then([=, &blret](auto ext_list) {
+      ).safe_then([=, &blret](auto ext_list) {
         auto cur = laddr_t::from_byte_offset(offset);
         for (auto &i: ext_list) {
           if (cur != i.first) {

@@ -71,7 +71,7 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
     // For submit_transaction_direct()
     ++(shard_stats.processing_inlock_io_num);
 
-    return with_transaction_intr(
+    return with_transaction(
       Transaction::src_t::MUTATE,
       "mkfs_tm",
       CACHE_HINT_TOUCH,
@@ -79,23 +79,17 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
     {
       cache->init();
       return cache->mkfs(t
-      ).si_then([this, &t] {
+      ).safe_then([this, &t] {
         return lba_manager->mkfs(t);
-      }).si_then([this, &t] {
+      }).safe_then([this, &t] {
         return backref_manager->mkfs(t);
-      }).si_then([this, &t] {
+      }).safe_then([this, &t] {
         return init_root_meta(t);
-      }).si_then([this, FNAME, &t] {
+      }).safe_then([this, FNAME, &t] {
         INFOT("submitting mkfs transaction", t);
         return submit_transaction_direct(t);
       });
-    }).handle_error(
-      crimson::ct_error::eagain::handle([] {
-        ceph_assert(0 == "eagain impossible");
-        return mkfs_ertr::now();
-      }),
-      mkfs_ertr::pass_further{}
-    ).finally([this] {
+    }).finally([this] {
       assert(shard_stats.pending_io_num);
       --(shard_stats.pending_io_num);
       // XXX: it's wrong to assume no failure,
@@ -149,7 +143,7 @@ TransactionManager::mount()
         } else {
           return lba_manager->init_cached_extent(t, e);
         }
-      }).si_then([this, &t] {
+      }).safe_then([this, &t] {
         epm->start_scan_space();
         if (can_drop_backref()) {
           return lba_manager->scan_mapped_space(
@@ -499,14 +493,14 @@ TransactionManager::refs_ret TransactionManager::remove(
   DEBUGT("{} offsets ...", t, offsets.size());
   return seastar::do_with(std::move(offsets), std::vector<unsigned>(),
     [this, &t, FNAME](auto &&offsets, auto &refcnts) {
-    return trans_intr::do_for_each(offsets.begin(), offsets.end(),
+    return crimson::do_for_each(offsets.begin(), offsets.end(),
       [this, &t, &refcnts](auto &laddr) {
       return this->remove(t, laddr
-      ).si_then([&refcnts](auto ref) {
+      ).safe_then([&refcnts](auto ref) {
         refcnts.push_back(ref);
         return ref_iertr::now();
       });
-    }).si_then([&refcnts, &t, FNAME] {
+    }).safe_then([&refcnts, &t, FNAME] {
       DEBUGT("removed {} offsets", t, refcnts.size());
       return ref_iertr::make_ready_future<std::vector<unsigned>>(std::move(refcnts));
     });
@@ -669,9 +663,7 @@ TransactionManager::submit_transaction(
   LOG_PREFIX(TransactionManager::submit_transaction);
   SUBDEBUGT(seastore_t, "start, entering reserve_projected_usage", t);
   auto reserve_start = std::chrono::steady_clock::now();
-  co_await trans_intr::make_interruptible(
-    t.get_handle().enter(write_pipeline.reserve_projected_usage)
-  );
+  co_await t.get_handle().enter(write_pipeline.reserve_projected_usage);
 
   auto dispatch_result = epm->dispatch_delayed_extents(t);
   if (usage_reserved) {
@@ -687,10 +679,8 @@ TransactionManager::submit_transaction(
 
   auto projected_usage = dispatch_result.usage;
   SUBTRACET(seastore_t, "waiting for projected_usage: {}", t, projected_usage);
-  co_await trans_intr::make_interruptible(
-    epm->reserve_projected_usage(
+  co_await epm->reserve_projected_usage(
       projected_usage
-    )
   );
   t.get_phase_durations().reserve +=
     std::chrono::steady_clock::now() - reserve_start;
@@ -774,7 +764,7 @@ TransactionManager::update_lba_mappings(
 
     return lba_manager->update_mappings(
       t, lextents
-    ).si_then([&pextents, this] {
+    ).safe_then([&pextents, this] {
       for (auto &extent : pextents) {
         assert(!extent->is_logical() && extent->is_valid());
         // for non-logical extents, we update its last_committed_crc
@@ -801,9 +791,7 @@ TransactionManager::do_submit_transaction(
 {
   LOG_PREFIX(TransactionManager::do_submit_transaction);
   SUBDEBUGT(seastore_t, "start, entering ool_writes", tref);
-  co_await trans_intr::make_interruptible(
-    tref.get_handle().enter(write_pipeline.ool_writes_and_lba_updates)
-  );
+  co_await tref.get_handle().enter(write_pipeline.ool_writes_and_lba_updates);
 
   SUBTRACET(seastore_t, "write delayed ool extents", tref);
   auto ool_start = std::chrono::steady_clock::now();
@@ -828,9 +816,7 @@ TransactionManager::do_submit_transaction(
 
   SUBTRACET(seastore_t, "entering prepare", tref);
   auto prepare_enter_start = std::chrono::steady_clock::now();
-  co_await trans_intr::make_interruptible(
-    tref.get_handle().enter(write_pipeline.prepare)
-  );
+  co_await tref.get_handle().enter(write_pipeline.prepare);
 
   tref.get_phase_durations().prepare_enter +=
     std::chrono::steady_clock::now() - prepare_enter_start;
@@ -882,9 +868,7 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().journal +=
     std::chrono::steady_clock::now() - journal_start;
 
-  co_await trans_intr::make_interruptible(
-    tref.get_handle().complete()
-  );
+  co_await tref.get_handle().complete();
 }
 
 seastar::future<> TransactionManager::flush(OrderingHandle &handle)
@@ -953,7 +937,7 @@ TransactionManager::rewrite_logical_extent(
       } catch (crimson::ct_error::eagain&) {}
       if (!nextent) {
         epm->maybe_wake_background();
-        co_await trans_intr::make_interruptible(epm->wait_background());
+        co_await epm->wait_background();
       }
     }
     assert(nextent->get_write_policy() != write_policy_t::WRITE_THROUGH);
@@ -975,7 +959,7 @@ TransactionManager::rewrite_logical_extent(
      * avoid this complication. */
     auto cursor = co_await lba_manager->get_cursor(
       t, *extent
-    ).handle_error_interruptible(
+    ).handle_error(
       rewrite_extent_iertr::pass_further{},
       crimson::ct_error::assert_all("unexpected enoent")
     );
@@ -1015,7 +999,7 @@ TransactionManager::rewrite_logical_extent(
       } catch (crimson::ct_error::eagain&) {}
       if (extents.empty()) {
         epm->maybe_wake_background();
-        co_await trans_intr::make_interruptible(epm->wait_background());
+        co_await epm->wait_background();
       }
     }
     extent_len_t off = 0;
@@ -1045,7 +1029,7 @@ TransactionManager::rewrite_logical_extent(
 	assert(off == 0);
 	auto cursor = co_await lba_manager->get_cursor(
 	  t, *extent
-	).handle_error_interruptible(
+	).handle_error(
 	  rewrite_extent_iertr::pass_further{},
 	  crimson::ct_error::assert_all("unexpected enoent")
 	);
@@ -1055,7 +1039,7 @@ TransactionManager::rewrite_logical_extent(
 	  extent->get_length(),
 	  extent->get_paddr(),
 	  *nextent
-	).handle_error_interruptible(
+	).handle_error(
 	  rewrite_extent_iertr::pass_further{},
 	  crimson::ct_error::assert_all("unexpected enoent")
 	);
@@ -1149,7 +1133,7 @@ TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
     assert(is_lba_node(extent->get_type()));
     fut = lba_manager->rewrite_extent(t, extent);
   }
-  return fut.si_then([FNAME, &t] {
+  return fut.safe_then([FNAME, &t] {
     DEBUGT("rewritten", t);
   });
 }
@@ -1164,7 +1148,7 @@ TransactionManager::alloc_and_copy_data_extents(
 {
   auto extents = co_await alloc_data_extents<ObjectDataBlock>(
     t, laddr_hint_t::create_as_fixed(dst_key), length, dst
-  ).handle_error_interruptible(
+  ).handle_error(
     move_region_iertr::pass_further(),
     crimson::ct_error::assert_all("invalid error"));
   auto iter = bl.begin();
@@ -1247,14 +1231,14 @@ TransactionManager::move_region(
         }
         auto cursor = co_await lba_manager->update_mapping_refcount(
           t, src.indirect_cursor, -1
-        ).handle_error_interruptible(
+        ).handle_error(
           move_region_iertr::pass_further(),
           crimson::ct_error::assert_all("invalid error"));
         // Mirror _remove: decrement the target direct's refcount too,
         // undoing the increment that clone_mapping did when creating this indirect.
         co_await src.direct_cursor->refresh();
         co_await _remove(t, LBAMapping::create_direct(std::move(src.direct_cursor))
-        ).handle_error_interruptible(
+        ).handle_error(
           move_region_iertr::pass_further(),
           crimson::ct_error::assert_all("invalid error"));
         src = co_await resolve_cursor_to_mapping(t, std::move(cursor));
@@ -1262,7 +1246,7 @@ TransactionManager::move_region(
         // update_mapping_refcount() call) whenever src and dst are the
         // only two related mappings in the tree.
         auto fresh_dst = co_await get_pin(t, this_dst_key
-        ).handle_error_interruptible(
+        ).handle_error(
           move_region_iertr::pass_further(),
           crimson::ct_error::assert_all("invalid error"));
         dst = co_await fresh_dst.next();
@@ -1318,11 +1302,11 @@ TransactionManager::move_region(
         }
         src = co_await src.refresh();
         src = co_await remove(t, std::move(src)
-        ).handle_error_interruptible(
+        ).handle_error(
           move_region_iertr::pass_further(),
           crimson::ct_error::assert_all("invalid error"));
         auto fresh_dst = co_await get_pin(t, this_dst_key
-        ).handle_error_interruptible(
+        ).handle_error(
           move_region_iertr::pass_further(),
           crimson::ct_error::assert_all("invalid error"));
         dst = co_await fresh_dst.next();
@@ -1343,13 +1327,13 @@ TransactionManager::move_region(
       dst = co_await dst.refresh();
       auto insert = co_await reserve_region(
         t, std::move(dst), dst_key, len, type
-      ).handle_error_interruptible(
+      ).handle_error(
         move_region_iertr::pass_further(),
         crimson::ct_error::assert_all("invalid error"));
       src = co_await src.refresh();
       auto cursor = co_await lba_manager->update_mapping_refcount(
         t, src.get_effective_cursor_ref(), -1
-      ).handle_error_interruptible(
+      ).handle_error(
         move_region_iertr::pass_further(),
         crimson::ct_error::assert_all("invalid error"));
       src = co_await resolve_cursor_to_mapping(t, std::move(cursor));
@@ -1400,7 +1384,7 @@ TransactionManager::promote_extent(
       } catch (crimson::ct_error::eagain&) {}
       if (promoted_raw_extents.empty()) {
         epm->maybe_wake_background();
-        co_await trans_intr::make_interruptible(epm->wait_background());
+        co_await epm->wait_background();
       }
     }
     t.touch_laddr_prefix(orig_ext->get_laddr().get_object_prefix());
@@ -1459,7 +1443,7 @@ TransactionManager::promote_extent(
       } catch (crimson::ct_error::eagain&) {}
       if (!promoted_extent) {
         epm->maybe_wake_background();
-        co_await trans_intr::make_interruptible(epm->wait_background());
+        co_await epm->wait_background();
       }
     }
     auto lext = promoted_extent->cast<LogicalChildNode>();
@@ -1490,7 +1474,7 @@ TransactionManager::promote_extent(
 
   auto cursor = co_await lba_manager->get_cursor(
     t, *orig_ext
-  ).handle_error_interruptible(
+  ).handle_error(
     promote_extent_iertr::pass_further(),
     crimson::ct_error::assert_all("invalid error"));
   auto mapping = co_await resolve_cursor_to_mapping(t, std::move(cursor));
@@ -1513,7 +1497,7 @@ TransactionManager::promote_extents_from_disk(
       co_return seastar::stop_iteration::no;
     }
     auto cursor = co_await lba_manager->get_cursor(t, laddr
-      ).handle_error_interruptible(
+      ).handle_error(
         crimson::ct_error::enoent::handle([](auto e) {
           // Another no_conflict transaction should have removed
           // the mapping between the backref retrieval and the
@@ -1565,7 +1549,7 @@ TransactionManager::rewrite_extents_ret TransactionManager::rewrite_extents(
     L_ADDR_NULL,
     [this, &t, target_generation, modify_time, &extents, FNAME, hint]
     (auto &paddr_hint, auto &next_laddr) {
-    return trans_intr::do_for_each(
+    return crimson::do_for_each(
       extents,
       [this, &t, target_generation, modify_time, FNAME,
       &paddr_hint, &next_laddr, hint](auto &extent) {
@@ -1580,9 +1564,7 @@ TransactionManager::rewrite_extents_ret TransactionManager::rewrite_extents(
       // the extent may be concurrently being loaded/written by another
       // transaction, wait for that IO to complete before rewriting it
       // to avoid racing with it
-      return trans_intr::make_interruptible(
-        extent->wait_io()
-      ).then_interruptible(
+      return extent->wait_io().then(
         [this, &t, target_generation, modify_time, FNAME,
         &paddr_hint, &next_laddr, hint, &extent]() mutable
         -> rewrite_extent_iertr::future<> {
@@ -1625,7 +1607,7 @@ TransactionManager::rewrite_extents_ret TransactionManager::rewrite_extents(
         }
         next_laddr = (ext->get_laddr() + ext->get_length()).checked_to_laddr();
         return rewrite_logical_extent(t, ext, paddr_hint
-        ).si_then([&paddr_hint](auto nlextents) {
+        ).safe_then([&paddr_hint](auto nlextents) {
           for (auto &nlextent : nlextents) {
             paddr_hint = nlextent->get_paddr() + nlextent->get_length();
           }
@@ -1649,7 +1631,7 @@ TransactionManager::demote_region(
   DEBUGT("start demote {}", t, prefix);
   auto cursor = co_await lba_manager->upper_bound_right(
     t, start
-  ).handle_error_interruptible(
+  ).handle_error(
     crimson::ct_error::enoent::handle([](auto) {
       // It's possible that there has been no lba mappings left
       // when demoting a region, for example, a temp recovering
@@ -2084,7 +2066,7 @@ TransactionManager::clone_ret TransactionManager::clone_range(
  (dst_base + cloned_to).checked_to_laddr(),
  clone_len,
  mapping.get_extent_type()
-      ).handle_error_interruptible(
+      ).handle_error(
  clone_iertr::pass_further{},
  crimson::ct_error::assert_all("unexpected error")
       );
@@ -2133,7 +2115,7 @@ TransactionManager::punch_mappings_ret TransactionManager::remove_mappings_in_ra
     if (params.cascade_remove_on_indirect ||
  mapping.is_zero_reserved()) {
       mapping = co_await remove(t, std::move(mapping)
-      ).handle_error_interruptible(
+      ).handle_error(
  punch_mappings_iertr::pass_further{},
  crimson::ct_error::assert_all(
    "remove_mappings_in_range hit invalid error"
@@ -2142,7 +2124,7 @@ TransactionManager::punch_mappings_ret TransactionManager::remove_mappings_in_ra
     } else {
       mapping = co_await _remove_indirect_mapping_only(
  t, std::move(mapping)
-      ).handle_error_interruptible(
+      ).handle_error(
  punch_mappings_iertr::pass_further{},
  crimson::ct_error::assert_all(
    "remove_mappings_in_range hit invalid error"

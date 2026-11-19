@@ -101,7 +101,7 @@ class NodeExtentManager {
       TransactionManager &tm,
       coll_t cid,
       crimson::os::seastore::CollectionManager &collection_manager,
-      laddr_t min_laddr = L_ADDR_MIN, double p_eagain = 0.0);
+      laddr_t min_laddr = L_ADDR_MIN);
 };
 inline std::ostream& operator<<(std::ostream& os, const NodeExtentManager& nm) {
   return nm.print(os);

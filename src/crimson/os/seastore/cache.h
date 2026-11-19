@@ -20,7 +20,6 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/transaction.h"
-#include "crimson/os/seastore/transaction_interruptor.h"
 #include "crimson/os/seastore/linked_tree_node.h"
 #include "crimson/os/seastore/extent_pinboard.h"
 
@@ -230,9 +229,8 @@ public:
         SUBDEBUGT(seastore_cache,
           "{} {}~0x{:x} is present on t without fully loaded -- {}",
           t, type, paddr, len, *ret);
-        return trans_intr::make_interruptible(
-          do_read_extent_maybe_partial<CachedExtent>(
-            ret->cast<CachedExtent>(), 0, ret->get_length(), &t_src));
+        return do_read_extent_maybe_partial<CachedExtent>(
+            ret->cast<CachedExtent>(), 0, ret->get_length(), &t_src);
       }
 
       SUBTRACET(seastore_cache,
@@ -276,9 +274,8 @@ public:
       SUBDEBUGT(seastore_cache,
         "{} {}~0x{:x} is present without fully loaded in cache -- {}",
         t, type, paddr, len, *ret);
-      return trans_intr::make_interruptible(
-        do_read_extent_maybe_partial<CachedExtent>(
-          ret->cast<CachedExtent>(), 0, ret->get_length(), &t_src));
+      return do_read_extent_maybe_partial<CachedExtent>(
+          ret->cast<CachedExtent>(), 0, ret->get_length(), &t_src);
     }
 
     // present in cache(fully loaded)
@@ -342,10 +339,8 @@ public:
       auto f = [&t, this, t_src](CachedExtent &ext) {
         access_extent(t, ext);
       };
-      return trans_intr::make_interruptible(
-        do_get_caching_extent<T>(
-          offset, length, [](T &){}, std::move(f), &t_src)
-      );
+      return do_get_caching_extent<T>(
+          offset, length, [](T &){}, std::move(f), &t_src);
     }
   }
 
@@ -403,8 +398,7 @@ public:
     auto ret = prepare_absent_extent<T>(
       t, offset, length, partial_off, partial_len, std::move(extent_init_func));
     const auto t_src = t.get_src();
-    return trans_intr::make_interruptible(
-      read_extent<T>(std::move(ret), partial_off, partial_len, &t_src, pin_crc));
+    return read_extent<T>(std::move(ret), partial_off, partial_len, &t_src, pin_crc);
   }
 
   /*
@@ -469,11 +463,9 @@ public:
 
 	access_extent(t, ext);
       };
-      return trans_intr::make_interruptible(
-	do_get_caching_extent<T>(
+      return do_get_caching_extent<T>(
 	  offset, length, 0, length,
-	  std::forward<Func>(extent_init_func), std::move(f), &t_src)
-      );
+	  std::forward<Func>(extent_init_func), std::move(f), &t_src);
     }
     return get_absent_extent<T>(t, offset, length, 0, length,
       std::forward<Func>(extent_init_func));
@@ -520,9 +512,7 @@ public:
       }
 
       auto target_extent = CachedExtentRef(&extent);
-      return trans_intr::make_interruptible(
-	extent.wait_io()
-      ).then_interruptible([target_extent, needs_touch, &t, this, t_src] {
+      return extent.wait_io().then([target_extent, needs_touch, &t, this, t_src] {
 	if (needs_touch) {
 	  access_extent(t, *target_extent);
 	}
@@ -606,9 +596,7 @@ public:
            p_extent->is_fully_loaded());
 
     auto target_extent = CachedExtentRef(p_extent);
-    return trans_intr::make_interruptible(
-      p_extent->wait_io()
-    ).then_interruptible([target_extent, needs_touch, &t, this, t_src] {
+    return p_extent->wait_io().then([target_extent, needs_touch, &t, this, t_src] {
       auto p_extent = target_extent.get();
       if (needs_touch) {
 	access_extent(t, *p_extent);
@@ -639,15 +627,12 @@ public:
         extent->get_type());
       ++access_stats.load_present;
       ++stats.access.load_present;
-      return trans_intr::make_interruptible(
-        do_read_extent_maybe_partial(
-          std::move(extent), partial_off, partial_len, &t_src));
+      return do_read_extent_maybe_partial(
+          std::move(extent), partial_off, partial_len, &t_src);
     } else {
       // TODO(implement fine-grained-wait):
       // the range might be already loaded, but we don't know
-      return trans_intr::make_interruptible(
-        extent->wait_io()
-      ).then_interruptible([extent] {
+      return extent->wait_io().then([extent] {
         return get_extent_iertr::make_ready_future<TCachedExtentRef<T>>(extent);
       });
     }
@@ -1085,11 +1070,9 @@ private:
       auto f = [&t, this, t_src](CachedExtent &ext) {
 	access_extent(t, ext);
       };
-      return trans_intr::make_interruptible(
-	do_get_caching_extent_by_type(
+      return do_get_caching_extent_by_type(
 	  type, offset, laddr, length,
-	  std::move(extent_init_func), std::move(f), &t_src)
-      );
+	  std::move(extent_init_func), std::move(f), &t_src);
     }
   }
 
@@ -1553,13 +1536,13 @@ public:
       std::move(_dirty),
       [this, FNAME, &t](auto &f, auto &refs) mutable
     {
-      return trans_intr::do_for_each(
+      return crimson::do_for_each(
         refs,
         [this, FNAME, &t, &f](auto &e)
       {
         SUBTRACET(seastore_cache, "inspecting extent ... -- {}", t, *e);
         return f(t, e
-        ).si_then([this, FNAME, &t, e](bool is_alive) {
+        ).safe_then([this, FNAME, &t, e](bool is_alive) {
           if (!is_alive) {
             SUBDEBUGT(seastore_cache, "extent is not alive, remove extent -- {}", t, *e);
             remove_extent(e, nullptr);
@@ -1569,12 +1552,12 @@ public:
           }
         });
       });
-    }).handle_error_interruptible(
+    }).handle_error(
       init_cached_extents_iertr::pass_further{},
       crimson::ct_error::assert_all(
         "Invalid error in Cache::init_cached_extents"
       )
-    ).si_then([this, FNAME, &t] {
+    ).safe_then([this, FNAME, &t] {
       SUBINFOT(seastore_cache,
           "finish with {}(0x{:x}B) extents, {} dirty, dirty_from={}, alloc_from={}",
           t,
@@ -1768,9 +1751,7 @@ public:
 	// the range of the extent has already been loaded, just do wait_io
 	SUBDEBUG(seastore_cache, "extent loaded");
 	read_extent_futs.emplace_back(
-	  trans_intr::make_interruptible(
-	    extent->wait_io()
-	  ).then_interruptible([] { return get_extent_iertr::now(); }));
+	  extent->wait_io().then([] { return get_extent_iertr::now(); }));
 	continue;
       }
       if (extent->is_pending_io()) {
@@ -1786,7 +1767,7 @@ public:
       absent_extents.emplace_back(ext);
     }
     co_await read_absent_extents_maybe_partial(t, std::move(absent_extents));
-    co_await trans_intr::parallel_for_each(
+    co_await get_extent_iertr::parallel_for_each(
       read_extent_futs, [](auto &fut) { return std::move(fut); });
   }
 
@@ -2308,8 +2289,8 @@ void stage_visibility_handoff(Transaction& t,
       off = P_ADDR_NULL;
     }
 
-    // TODO: when_all_succeed should be utilized here, however, it doesn't
-    // 	   actually work with interruptible errorated futures for now.
+    // TODO: when_all_succeed could be used here now that the
+    // 	   futures are plain errorated futures.
     co_await ExtentPlacementManager::read_ertr::parallel_for_each(
       futs, [](auto &fut) { return std::move(fut);
     }).handle_error(

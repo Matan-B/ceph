@@ -60,7 +60,7 @@ struct get_child_ret_t {
 
   template <typename T>
   get_child_ifut<T> get_child_fut_as() {
-    return std::move(get_child_fut()).si_then([](auto e) {
+    return std::move(get_child_fut()).safe_then([](auto e) {
       return e->template cast<T>();
     });
   }
@@ -256,7 +256,7 @@ public:
     TCachedExtentRef<T> ext)
   {
     return get_extent_viewable_by_trans(t, CachedExtentRef(ext.get())
-    ).si_then([](auto ext) {
+    ).safe_then([](auto ext) {
       return ext->template cast<T>();
     });
   }
@@ -1105,7 +1105,7 @@ private:
   {
     return etvr.maybe_wait_accessible(
       t, *this->peek_parent_node()
-    ).si_then([&t, key, this] {
+    ).safe_then([&t, key, this] {
       auto parent = this->peek_parent_node();
       return parent->resolve_transaction(t, key).second;
     });

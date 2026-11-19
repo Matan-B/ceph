@@ -552,12 +552,12 @@ class NodeExtentAccessorT {
     assert(!extent->is_initial_pending());
     auto alloc_size = get_length();
     return c.nm.alloc_extent(c.t, hint, alloc_size
-    ).handle_error_interruptible(
+    ).handle_error(
       eagain_iertr::pass_further{},
       crimson::ct_error::input_output_error::assert_failure(
         "{} during allocate -- node_size={}, to_discard={}",
         FNAME, alloc_size, extent->get_laddr())
-    ).si_then([this, c, FNAME] (auto fresh_extent) {
+    ).safe_then([this, c, FNAME] (auto fresh_extent) {
       SUBDEBUGT(seastore_onode,
           "update addr from {} to {} ...",
           c.t, extent->get_laddr(), fresh_extent->get_laddr());
@@ -577,15 +577,14 @@ class NodeExtentAccessorT {
       recorder = nullptr;
 
       return c.nm.retire_extent(c.t, to_discard
-      ).handle_error_interruptible(
+      ).handle_error(
         eagain_iertr::pass_further{},
         crimson::ct_error::assert_all(
           "{} during retire -- to_disgard={}, fresh={}",
           FNAME, to_discard->get_laddr(), fresh_extent->get_laddr())
       );
-    }).si_then([this, c] {
+    }).safe_then([this, c] {
       boost::ignore_unused(c);  // avoid clang warning;
-      assert(!c.t.is_conflicted());
       return *mut;
     });
   }
@@ -595,12 +594,11 @@ class NodeExtentAccessorT {
     assert(!is_retired());
     auto addr = extent->get_laddr();
     return c.nm.retire_extent(c.t, std::move(extent)
-    ).handle_error_interruptible(
+    ).handle_error(
       eagain_iertr::pass_further{},
       crimson::ct_error::assert_all("{} addr={}", FNAME, addr)
 #ifndef NDEBUG
-    ).si_then([c] {
-      assert(!c.t.is_conflicted());
+    ).safe_then([c] {
     }
 #endif
     );

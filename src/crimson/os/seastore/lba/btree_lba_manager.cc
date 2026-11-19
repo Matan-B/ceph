@@ -151,7 +151,7 @@ BtreeLBAManager::mkfs(
   assert(croot->is_mutation_pending());
   croot->get_root().lba_root =
     co_await LBABtree::mkfs(croot, get_context(t)
-    ).handle_error_interruptible(
+    ).handle_error(
       mkfs_iertr::pass_further{},
       crimson::ct_error::assert_all("unexpected error")
     );
@@ -288,7 +288,7 @@ BtreeLBAManager::resolve_indirect_cursor(
     btree,
     indirect_cursor.get_intermediate_key(),
     indirect_cursor.get_length()
-  ).si_then([&indirect_cursor](auto cursors) {
+  ).safe_then([&indirect_cursor](auto cursors) {
     ceph_assert(cursors.size() == 1);
     auto& direct_cursor = cursors.front();
     [[maybe_unused]] auto intermediate_key = indirect_cursor.get_intermediate_key();
@@ -402,7 +402,7 @@ BtreeLBAManager::demote_extent(
       return val;
     },
     &extent
-  ).handle_error_interruptible(
+  ).handle_error(
     demote_extent_iertr::pass_further{},
     crimson::ct_error::assert_all("unexpected enoent"));
   co_return ret;
@@ -562,14 +562,13 @@ BtreeLBAManager::get_cursor(
   TRACET("{} ...", c.trans, laddr);
   return btree.lower_bound(
     c, laddr
-  ).si_then([FNAME, c, laddr](auto iter) -> get_cursor_ret {
+  ).safe_then([FNAME, c, laddr](auto iter) -> get_cursor_ret {
     if (iter.is_end() || iter.get_key() != laddr) {
       ERRORT("{} doesn't exist", c.trans, laddr);
       return crimson::ct_error::enoent::make();
     }
     TRACET("{} got value {}", c.trans, laddr, iter.get_val());
-    return get_cursor_ret(
-      interruptible::ready_future_marker{},
+    return make_ready_fut<get_cursor_ret>(
       iter.get_cursor(c));
   });
 }
@@ -715,7 +714,7 @@ BtreeLBAManager::alloc_contiguous_mappings(
     [this, c, hint, &alloc_infos, total_len](auto &btree)
   {
     return search_insert_position(c, btree, hint, total_len
-    ).si_then([this, c, &alloc_infos, &btree](insert_position_t res) {
+    ).safe_then([this, c, &alloc_infos, &btree](insert_position_t res) {
       extent_len_t offset = 0;
       for (auto &info : alloc_infos) {
 	info.key = (res.laddr + offset).checked_to_laddr();
@@ -758,7 +757,7 @@ BtreeLBAManager::alloc_sparse_mappings(
     [this, c, hint, &alloc_infos, total_len](auto &btree)
   {
     return search_insert_position(c, btree, hint, total_len
-    ).si_then([this, c, hint, &alloc_infos, &btree](auto res) {
+    ).safe_then([this, c, hint, &alloc_infos, &btree](auto res) {
       if (hint.condition != laddr_conflict_condition_t::all_at_never) {
 	for (auto &info : alloc_infos) {
 	  auto offset = info.key.get_byte_distance<extent_len_t>(hint.addr);
@@ -795,7 +794,7 @@ BtreeLBAManager::insert_mappings(
     [c, &btree, &alloc_infos]
     (LBABtree::iterator &iter, std::list<LBACursorRef> &ret)
   {
-    return trans_intr::do_for_each(
+    return crimson::do_for_each(
       alloc_infos.begin(),
       alloc_infos.end(),
       [c, &btree, &iter](auto &info)
@@ -808,7 +807,7 @@ BtreeLBAManager::insert_mappings(
         need_reserved_ptr
           ? get_reserved_ptr<LBALeafNode, laddr_t>()
           : static_cast<BaseChildNode<LBALeafNode, laddr_t>*>(info.extent)
-      ).si_then([c, &iter, &info](auto p) {
+      ).safe_then([c, &iter, &info](auto p) {
 	ceph_assert(p.second);
 	iter = std::move(p.first);
 	if (is_valid_child_ptr(info.extent)) {
@@ -826,21 +825,21 @@ BtreeLBAManager::insert_mappings(
 	    info.extent->set_laddr(iter.get_key());
 	  }
 	}
-	return iter.next(c).si_then([&iter](auto p) {
+	return iter.next(c).safe_then([&iter](auto p) {
 	  iter = std::move(p);
 	});
       });
-    }).si_then([&ret, &iter, alloc_infos, c] {
-      return trans_intr::do_for_each(
+    }).safe_then([&ret, &iter, alloc_infos, c] {
+      return crimson::do_for_each(
 	boost::make_counting_iterator<size_t>(0),
 	boost::make_counting_iterator<size_t>(alloc_infos.size()),
 	[&ret, &iter, c](auto) {
-	return iter.prev(c).si_then([c, &ret, &iter](auto it) {
+	return iter.prev(c).safe_then([c, &ret, &iter](auto it) {
 	  ret.push_front(it.get_cursor(c));
 	  iter = std::move(it);
 	});
       });
-    }).si_then([&ret] {
+    }).safe_then([&ret] {
       return alloc_mappings_iertr::make_ready_future<
 	std::list<LBACursorRef>>(std::move(ret));
     });
@@ -874,7 +873,7 @@ _init_cached_extent(
     return btree.lower_bound(
       c,
       logn->get_laddr()
-    ).si_then([e, c, logn, &ret](auto iter) {
+    ).safe_then([e, c, logn, &ret](auto iter) {
       LOG_PREFIX(BtreeLBAManager::init_cached_extent);
       if (!iter.is_end() &&
 	  iter.get_key() == logn->get_laddr() &&
@@ -893,7 +892,7 @@ _init_cached_extent(
     });
   } else {
     return btree.init_cached_extent(c, e
-    ).si_then([&ret](bool is_alive) {
+    ).safe_then([&ret](bool is_alive) {
       ret = is_alive;
     });
   }
@@ -915,7 +914,7 @@ BtreeLBAManager::init_cached_extent(
 	DEBUGT("extent {}", c.trans, *e);
 	return _init_cached_extent(c, e, btree, ret);
       }
-    ).si_then([&ret] { return ret; });
+    ).safe_then([&ret] { return ret; });
   });
 }
 
@@ -956,8 +955,7 @@ BtreeLBAManager::scan_mappings(
 	btree.upper_bound_right(c, begin),
 	[f=std::move(f), begin, end](auto &pos) {
 	  if (pos.is_end() || pos.get_key() >= end) {
-	    return typename LBABtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
+	    return typename make_ready_fut<LBABtree::iterate_repeat_ret_inner>(
 	      seastar::stop_iteration::yes);
 	  }
 	  ceph_assert((pos.get_key() + pos.get_val().len) > begin);
@@ -965,8 +963,7 @@ BtreeLBAManager::scan_mappings(
 	    f(pos.get_key(), pos.get_val().pladdr.get_paddr(),
 	      pos.get_val().shadow_paddr, pos.get_val().len);
 	  }
-	  return LBABtree::iterate_repeat_ret_inner(
-	    interruptible::ready_future_marker{},
+	  return make_ready_fut<LBABtree::iterate_repeat_ret_inner>(
 	    seastar::stop_iteration::no);
 	});
     });
@@ -1055,7 +1052,7 @@ BtreeLBAManager::update_mapping(
       return ret;
     },
     &nextent
-  ).handle_error_interruptible(
+  ).handle_error(
     update_mapping_iertr::pass_further{},
     /* ENOENT in particular should be impossible */
     crimson::ct_error::assert_all(
@@ -1084,11 +1081,11 @@ BtreeLBAManager::update_mappings(
     cache,
     c,
     [c, &extents, FNAME, this](auto &btree) {
-    return trans_intr::do_for_each(
+    return crimson::do_for_each(
       extents,
       [this, FNAME, c, &btree](auto &extent) {
       return extent->get_parent_node(c.trans, c.cache
-      ).si_then([c, &extent, FNAME, &btree, this](auto leaf) {
+      ).safe_then([c, &extent, FNAME, &btree, this](auto leaf) {
 	if (leaf->is_pending()) {
 	  TRACET("find pending extent {} for {}",
 		 c.trans, (void*)leaf.get(), *extent);
@@ -1134,7 +1131,7 @@ BtreeLBAManager::update_mappings(
 	    },
 	    nullptr   // all the extents should have already been
 		      // added to the fixed_kv_btree
-	  ).si_then([c, prev_addr, len, addr,
+	  ).safe_then([c, prev_addr, len, addr,
 		    checksum, FNAME](auto res) {
 	      DEBUGT("paddr {}~0x{:x} => {}, crc=0x{:x} done -- {}",
 		     c.trans, prev_addr, len,
@@ -1340,7 +1337,7 @@ BtreeLBAManager::get_containing_cursor(
   LOG_PREFIX(BtreeLBAManager::get_containing_cursor);
   TRACET("{}", c.trans, laddr);
   return btree.upper_bound_right(c, laddr
-  ).si_then([c, laddr, FNAME](LBABtree::iterator iter)
+  ).safe_then([c, laddr, FNAME](LBABtree::iterator iter)
 	    -> get_cursor_ret {
     if (iter.is_end() ||
 	iter.get_key() > laddr ||
@@ -1454,7 +1451,7 @@ BtreeLBAManager::remap_mappings(
     }
     off = remap.offset;
   }
-  co_await trans_intr::parallel_for_each(
+  co_await base_iertr::parallel_for_each(
     ret,
     [](auto &cursor) {
       return cursor->refresh();
@@ -1550,7 +1547,7 @@ BtreeLBAManager::_move_mapping(
 
   ret.src = co_await update_mapping_refcount(
     c.trans, ret.src, -1
-  ).handle_error_interruptible(
+  ).handle_error(
     move_mapping_iertr::pass_further{},
     crimson::ct_error::assert_all("unexpected error"));
 
@@ -1606,7 +1603,7 @@ BtreeLBAManager::move_and_clone_direct_mapping(
       return val;
     },
     nullptr
-  ).handle_error_interruptible(
+  ).handle_error(
     move_mapping_iertr::pass_further{},
     crimson::ct_error::assert_all("unexpected error"));
 
@@ -1635,7 +1632,7 @@ BtreeLBAManager::update_mapping_refcount(
       return ret;
     },
     nullptr
-  ).handle_error_interruptible(
+  ).handle_error(
     base_iertr::pass_further{},
     crimson::ct_error::assert_all("unexpected error")
   );

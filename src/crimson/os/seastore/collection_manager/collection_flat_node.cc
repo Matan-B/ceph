@@ -51,8 +51,7 @@ FlatCollectionNode::list()
   for (auto &[coll, value] : decoded) {
     list_result.emplace_back(coll, coll_info_t(value.bits, value.onode_root));
   }
-  return list_ret(
-    interruptible::ready_future_marker{},
+  return make_ready_fut<list_ret>(
     std::move(list_result));
 }
 
@@ -69,16 +68,14 @@ FlatCollectionNode::create(coll_context_t cc, coll_t coll, coll_value_t value)
   assert(inserted);
   if (encoded_sizeof((base_coll_map_t&)decoded) > get_bptr().length()) {
     decoded.erase(iter);
-    return create_ret(
-      interruptible::ready_future_marker{},
+    return make_ready_fut<create_ret>(
       create_result_t::OVERFLOW);
   } else {
     if (auto buffer = maybe_get_delta_buffer(); buffer) {
       buffer->insert(coll, value);
     }
     copy_to_node();
-    return create_ret(
-      interruptible::ready_future_marker{},
+    return make_ready_fut<create_ret>(
       create_result_t::SUCCESS);
   }
 }

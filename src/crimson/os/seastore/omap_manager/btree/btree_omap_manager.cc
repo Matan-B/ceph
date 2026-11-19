@@ -26,7 +26,7 @@ BtreeOMapManager::initialize_omap(
   LOG_PREFIX(BtreeOMapManager::initialize_omap);
   DEBUGT("hint: {}", t, hint);
   return tm.alloc_non_data_extent<OMapLeafNode>(t, hint, get_leaf_size(type))
-    .si_then([hint, &t, type](auto&& root_extent) {
+    .safe_then([hint, &t, type](auto&& root_extent) {
       root_extent->set_size(0);
       root_extent->init_range(BEGIN_KEY, END_KEY);
       omap_node_meta_t meta{1};
@@ -39,7 +39,7 @@ BtreeOMapManager::initialize_omap(
       t.get_omap_tree_stats().depth = 1u;
       t.get_omap_tree_stats().extents_num_delta++;
       return initialize_omap_iertr::make_ready_future<omap_root_t>(omap_root);
-  }).handle_error_interruptible(
+  }).handle_error(
     crimson::ct_error::enospc::assert_failure("unexpected enospc"),
     TransactionManager::alloc_extent_iertr::pass_further{}
   );
@@ -53,13 +53,13 @@ BtreeOMapManager::get_omap_root(omap_context_t oc, const omap_root_t &omap_root)
   if (omap_root.get_depth() > 1) {
     return omap_load_extent<OMapInnerNode>(
       oc, laddr, omap_root.get_depth(), BEGIN_KEY, END_KEY
-    ).si_then([](auto extent) {
+    ).safe_then([](auto extent) {
       return extent->template cast<OMapNode>();
     });
   } else {
     return omap_load_extent<OMapLeafNode>(
       oc, laddr, omap_root.get_depth(), BEGIN_KEY, END_KEY
-    ).si_then([](auto extent) {
+    ).safe_then([](auto extent) {
       return extent->template cast<OMapNode>();
     });
   }
@@ -75,7 +75,7 @@ BtreeOMapManager::handle_root_split(
   DEBUGT("{}", oc.t, omap_root);
   return oc.tm.alloc_non_data_extent<OMapInnerNode>(oc.t, omap_root.hint,
                                            OMAP_INNER_BLOCK_SIZE)
-    .si_then([&omap_root, mresult, oc, FNAME]
+    .safe_then([&omap_root, mresult, oc, FNAME]
 	      (auto&& nroot) -> handle_root_split_ret {
     auto [left, right, pivot] = *(mresult.split_tuple);
     omap_node_meta_t meta{omap_root.depth + 1};
@@ -97,7 +97,7 @@ BtreeOMapManager::handle_root_split(
     ++(oc.t.get_omap_tree_stats().extents_num_delta);
     DEBUGT("l {}, r {}", oc.t, *left, *right);
     return seastar::now();
-  }).handle_error_interruptible(
+  }).handle_error(
     crimson::ct_error::enospc::assert_failure("unexpected enospc"),
     TransactionManager::alloc_extent_iertr::pass_further{}
   );
@@ -121,9 +121,9 @@ BtreeOMapManager::handle_root_merge(
   oc.t.get_omap_tree_stats().depth = omap_root.depth;
   oc.t.get_omap_tree_stats().extents_num_delta--;
   return oc.tm.remove(oc.t, old_root->get_laddr()
-  ).si_then([](auto &&ret) -> handle_root_merge_ret {
+  ).safe_then([](auto &&ret) -> handle_root_merge_ret {
     return seastar::now();
-  }).handle_error_interruptible(
+  }).handle_error(
     handle_root_merge_iertr::pass_further{},
     crimson::ct_error::assert_all(
       "Invalid error in handle_root_merge"
@@ -251,7 +251,7 @@ BtreeOMapManager::omap_iterate(
   return get_omap_root(
     get_omap_context(t, omap_root),
     omap_root
-  ).si_then([this, &t, &start_from, callback, &omap_root](auto extent) {
+  ).safe_then([this, &t, &start_from, callback, &omap_root](auto extent) {
     return extent->iterate(
       get_omap_context(t, omap_root),
       start_from,
@@ -282,7 +282,7 @@ BtreeOMapManager::omap_list(
   return get_omap_root(
     get_omap_context(t, omap_root),
     omap_root
-  ).si_then([this, config, &t, &first, &last, &omap_root](auto extent) {
+  ).safe_then([this, config, &t, &first, &last, &omap_root](auto extent) {
     return extent->list(
       get_omap_context(t, omap_root),
       first,
@@ -301,18 +301,18 @@ BtreeOMapManager::omap_clear(
   return get_omap_root(
     get_omap_context(t, omap_root),
     omap_root
-  ).si_then([this, &t, &omap_root](auto extent) {
+  ).safe_then([this, &t, &omap_root](auto extent) {
     return extent->clear(get_omap_context(t, omap_root));
-  }).si_then([this, &omap_root, &t] {
+  }).safe_then([this, &omap_root, &t] {
     return tm.remove(
       t, omap_root.get_location()
-    ).si_then([&omap_root] (auto ret) {
+    ).safe_then([&omap_root] (auto ret) {
       omap_root.update(
 	L_ADDR_NULL,
 	0, LADDR_HINT_NULL, omap_root.get_type());
       return omap_clear_iertr::now();
     });
-  }).handle_error_interruptible(
+  }).handle_error(
     omap_clear_iertr::pass_further{},
     crimson::ct_error::assert_all(
       "Invalid error in BtreeOMapManager::omap_clear"

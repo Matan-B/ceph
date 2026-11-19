@@ -2208,10 +2208,10 @@ Cache::mkfs_iertr::future<> Cache::mkfs(Transaction &t)
 {
   LOG_PREFIX(Cache::mkfs);
   INFOT("create root", t);
-  return get_root(t).si_then([this, &t](auto croot) {
+  return get_root(t).safe_then([this, &t](auto croot) {
     duplicate_for_write(t, croot);
     return mkfs_iertr::now();
-  }).handle_error_interruptible(
+  }).handle_error(
     mkfs_iertr::pass_further{},
     crimson::ct_error::assert_all(
       "Invalid error in Cache::mkfs"
@@ -2479,13 +2479,11 @@ Cache::get_next_dirty_extents_ret Cache::get_next_dirty_extents(
     std::move(cand),
     decltype(cand)(),
     [FNAME, this, &t](auto &cand, auto &ret) {
-      return trans_intr::do_for_each(
+      return crimson::do_for_each(
 	cand,
 	[FNAME, this, &t, &ret](auto &ext) {
 	  TRACET("waiting on extent -- {}", t, *ext);
-	  return trans_intr::make_interruptible(
-	    ext->wait_io()
-	  ).then_interruptible([FNAME, this, ext, &t, &ret] {
+	  return ext->wait_io().then([FNAME, this, ext, &t, &ret] {
 	    if (!ext->is_valid()) {
 	      return;
 	    }
@@ -2502,7 +2500,7 @@ Cache::get_next_dirty_extents_ret Cache::get_next_dirty_extents(
 	    }
 	    ret.push_back(ext);
 	  });
-	}).then_interruptible([&ret] {
+	}).then([&ret] {
 	  return std::move(ret);
 	});
     });
@@ -2634,15 +2632,13 @@ Cache::_get_absent_extent_by_type(
   ++access_stats.load_absent;
   ++stats.access.load_absent;
   access_extent(t, *ret);
-  return trans_intr::make_interruptible(
-    read_extent(std::move(ret), 0, length, &t_src, pin_crc
+  return read_extent(std::move(ret), 0, length, &t_src, pin_crc
     ).safe_then([laddr](auto extent) {
       if (extent->is_logical()) {
 	extent->template cast<LogicalCachedExtent>()->set_laddr(laddr);
       }
       return extent;
-    })
-  );
+    });
 }
 
 Cache::get_extent_ertr::future<CachedExtentRef>

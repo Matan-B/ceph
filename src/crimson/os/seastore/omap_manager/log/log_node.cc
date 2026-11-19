@@ -191,13 +191,11 @@ LogNode::get_value_ret LogNode::get_value(const std::string &key, copy_t c)
     return false;
   });
   if (bl.length() > 0 || found) {
-    return get_value_ret(
-      interruptible::ready_future_marker{},
+    return make_ready_fut<get_value_ret>(
       std::move(bl));
   }
 
-  return get_value_ret(
-    interruptible::ready_future_marker{},
+  return make_ready_fut<get_value_ret>(
     std::nullopt);
 }
 

@@ -352,7 +352,7 @@ eagain_ifuture<std::pair<Ref<tree_cursor_t>, bool>> Node::insert(
     MatchHistory(), [this, c, &key, vconf,
                      this_ref = std::move(this_ref)] (auto& history) mutable {
       return lower_bound_tracked(c, key, history
-      ).si_then([c, &key, vconf, &history,
+      ).safe_then([c, &key, vconf, &history,
                    this_ref = std::move(this_ref)] (auto result) mutable {
         // the cursor in the result should already hold the root node upwards
         this_ref.reset();
@@ -363,7 +363,7 @@ eagain_ifuture<std::pair<Ref<tree_cursor_t>, bool>> Node::insert(
           auto leaf_node = result.p_cursor->get_leaf_node();
           return leaf_node->insert_value(
               c, key, vconf, result.p_cursor->get_position(), history, result.mstat
-          ).si_then([](auto p_cursor) {
+          ).safe_then([](auto p_cursor) {
             return seastar::make_ready_future<std::pair<Ref<tree_cursor_t>, bool>>(
                 std::make_pair(p_cursor, true));
           });
@@ -379,7 +379,7 @@ eagain_ifuture<std::size_t> Node::erase(
     Ref<Node>&& this_ref)
 {
   return lower_bound(c, key
-  ).si_then([c, this_ref = std::move(this_ref)] (auto result) mutable {
+  ).safe_then([c, this_ref = std::move(this_ref)] (auto result) mutable {
     // the cursor in the result should already hold the root node upwards
     this_ref.reset();
     if (result.match() != MatchKindBS::EQ) {
@@ -387,7 +387,7 @@ eagain_ifuture<std::size_t> Node::erase(
     }
     auto ref_cursor = result.p_cursor;
     return ref_cursor->erase(c, false
-    ).si_then([ref_cursor] (auto next_cursor) {
+    ).safe_then([ref_cursor] (auto next_cursor) {
       assert(ref_cursor->is_invalid());
       assert(!next_cursor);
       return std::size_t(1);
@@ -399,7 +399,7 @@ eagain_ifuture<tree_stats_t> Node::get_tree_stats(context_t c)
 {
   return seastar::do_with(
     tree_stats_t(), [this, c](auto& stats) {
-      return do_get_tree_stats(c, stats).si_then([&stats] {
+      return do_get_tree_stats(c, stats).safe_then([&stats] {
         return stats;
       });
     }
@@ -432,7 +432,7 @@ eagain_ifuture<> Node::mkfs(context_t c, RootNodeTracker& root_tracker)
 {
   LOG_PREFIX(OTree::Node::mkfs);
   return LeafNode::allocate_root(c, root_tracker
-  ).si_then([c, FNAME](auto ret) {
+  ).safe_then([c, FNAME](auto ret) {
     c.t.get_onode_tree_stats().extents_num_delta++;
     INFOT("allocated root {}", c.t, ret->get_name());
   });
@@ -442,17 +442,17 @@ eagain_ifuture<Ref<Node>> Node::load_root(context_t c, RootNodeTracker& root_tra
 {
   LOG_PREFIX(OTree::Node::load_root);
   return c.nm.get_super(c.t, root_tracker
-  ).handle_error_interruptible(
+  ).handle_error(
     eagain_iertr::pass_further{},
     crimson::ct_error::input_output_error::assert_failure(
         "{} EIO during get_super()", FNAME)
-  ).si_then([c, &root_tracker, FNAME](auto&& _super) {
+  ).safe_then([c, &root_tracker, FNAME](auto&& _super) {
     assert(_super);
     auto root_addr = _super->get_root_laddr();
     assert(root_addr != L_ADDR_NULL);
     TRACET("loading root_addr={} ...", c.t, root_addr);
     return Node::load(c, root_addr, true
-    ).si_then([c, _super = std::move(_super),
+    ).safe_then([c, _super = std::move(_super),
                  &root_tracker, FNAME](auto root) mutable {
       TRACET("loaded {}", c.t, root->get_name());
       assert(root->impl->field_type() == field_type_t::N0);
@@ -500,7 +500,7 @@ eagain_ifuture<> Node::upgrade_root(context_t c, laddr_hint_t hint)
   auto super_to_move = deref_super();
   return InternalNode::allocate_root(
       c, hint, impl->level(), impl->laddr(), std::move(super_to_move)
-  ).si_then([this, c, FNAME](auto new_root) {
+  ).safe_then([this, c, FNAME](auto new_root) {
     as_child(search_position_t::end(), new_root);
     INFOT("upgraded from {} to {}",
           c.t, get_name(), new_root->get_name());
@@ -579,7 +579,7 @@ Node::try_merge_adjacent(
   }
 
   return parent_info().ptr->get_child_peers(c, parent_info().position
-  ).si_then([c, this_ref = std::move(this_ref), this, FNAME,
+  ).safe_then([c, this_ref = std::move(this_ref), this, FNAME,
                update_parent_index] (auto lr_nodes) mutable -> eagain_ifuture<> {
     auto& [lnode, rnode] = lr_nodes;
     Ref<Node> left_for_merge;
@@ -636,7 +636,7 @@ Node::try_merge_adjacent(
         // fresh extent, thus no need to generate delta.
         auto left_addr = left_for_merge->impl->laddr();
         return left_for_merge->rebuild_extent(c
-        ).si_then([c, update_index_after_merge,
+        ).safe_then([c, update_index_after_merge,
                      left_addr,
                      merge_stage = merge_stage,
                      merge_size = merge_size,
@@ -704,7 +704,7 @@ eagain_ifuture<Ref<Node>> Node::load(
 {
   LOG_PREFIX(OTree::Node::load);
   return c.nm.read_extent(c.t, addr
-  ).handle_error_interruptible(
+  ).handle_error(
     eagain_iertr::pass_further{},
     crimson::ct_error::all_same_way(
       [FNAME, c, addr, expect_is_level_tail](const auto &e) {
@@ -713,7 +713,7 @@ eagain_ifuture<Ref<Node>> Node::load(
       ceph_abort();
       return eagain_iertr::make_ready_future<NodeExtentRef>();
     })
-  ).si_then([FNAME, c, addr, expect_is_level_tail](auto extent)
+  ).safe_then([FNAME, c, addr, expect_is_level_tail](auto extent)
 	      -> eagain_ifuture<Ref<Node>> {
     assert(extent);
     auto header = extent->get_header();
@@ -782,7 +782,7 @@ eagain_ifuture<> Node::retire(context_t c, Ref<Node>&& this_ref)
   assert(this_ref->use_count() == 1);
 
   return impl->retire_extent(c
-  ).si_then([this_ref = std::move(this_ref)]{ /* deallocate node */});
+  ).safe_then([this_ref = std::move(this_ref)]{ /* deallocate node */});
 }
 
 void Node::make_tail(context_t c)
@@ -826,7 +826,7 @@ InternalNode::get_next_cursor(context_t c, const search_position_t& pos)
     }
     assert(p_child_addr);
     return get_or_track_child(c, next_pos, p_child_addr->value
-    ).si_then([c](auto child) {
+    ).safe_then([c](auto child) {
       return child->lookup_smallest(c);
     });
   }
@@ -871,7 +871,7 @@ eagain_ifuture<> InternalNode::apply_child_split(
   return insert_or_split(
       c, left_pos, left_key, left_child,
       (update_right_index ? right_child : nullptr)
-  ).si_then([this, c,
+  ).safe_then([this, c,
              this_ref = std::move(this_ref)] (auto split_right) mutable {
     if (split_right) {
       // even if update_right_index could be true,
@@ -882,7 +882,7 @@ eagain_ifuture<> InternalNode::apply_child_split(
     } else {
       return eagain_iertr::now();
     }
-  }).si_then([c, update_right_index,
+  }).safe_then([c, update_right_index,
                 right_child = std::move(right_child)] () mutable {
     if (update_right_index) {
       // XXX: might not need to call validate_tracked_children() in fix_index()
@@ -908,7 +908,7 @@ eagain_ifuture<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
   // and trigger prv_child_ref->try_merge_adjacent() at the end
   bool fix_tail = (child_ref->parent_info().position.is_end() &&
                    !impl->is_keys_empty());
-  return eagain_iertr::now().si_then([c, this, fix_tail] {
+  return eagain_iertr::now().safe_then([c, this, fix_tail] {
     if (fix_tail) {
       search_position_t new_tail_pos;
       const laddr_packed_t* new_tail_p_addr = nullptr;
@@ -917,7 +917,7 @@ eagain_ifuture<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
     } else {
       return eagain_iertr::make_ready_future<Ref<Node>>();
     }
-  }).si_then([c, this, child_ref = std::move(child_ref), FNAME]
+  }).safe_then([c, this, child_ref = std::move(child_ref), FNAME]
                (auto&& new_tail_child) mutable {
     auto child_pos = child_ref->parent_info().position;
     if (new_tail_child) {
@@ -940,7 +940,7 @@ eagain_ifuture<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
     Ref<Node> this_ref = child_ref->deref_parent();
     assert(this_ref == this);
     return child_ref->retire(c, std::move(child_ref)
-    ).si_then([c, this, child_pos, FNAME,
+    ).safe_then([c, this, child_pos, FNAME,
                  this_ref = std::move(this_ref)] () mutable {
       if (impl->has_single_value()) {
         // fast path without mutating the extent
@@ -1001,7 +1001,7 @@ eagain_ifuture<> InternalNode::erase_child(context_t c, Ref<Node>&& child_ref)
         }
         return try_merge_adjacent(c, update_parent_index, std::move(this_ref));
       }
-    }).si_then([c, new_tail_child = std::move(new_tail_child)] () mutable {
+    }).safe_then([c, new_tail_child = std::move(new_tail_child)] () mutable {
       // finally, check if the new tail child needs to merge
       if (new_tail_child && !new_tail_child->is_root()) {
         assert(new_tail_child->impl->is_level_tail());
@@ -1048,7 +1048,7 @@ eagain_ifuture<> InternalNode::fix_index(
   }
 
   return insert_or_split(c, next_pos, new_key, child
-  ).si_then([this, c, update_parent_index, check_downgrade,
+  ).safe_then([this, c, update_parent_index, check_downgrade,
                this_ref = std::move(this_ref)] (auto split_right) mutable {
     if (split_right) {
       // after split, the parent index to the split_right will be incorrect
@@ -1133,7 +1133,7 @@ eagain_ifuture<> InternalNode::apply_children_merge(
   // All good to retire the right_child.
   // I'm already ref-counted by left_child.
   return right_child->retire(c, std::move(right_child)
-  ).si_then([c, this, update_index,
+  ).safe_then([c, this, update_index,
                left_child = std::move(left_child)] () mutable {
     if (update_index) {
       // I'm all good but:
@@ -1210,16 +1210,16 @@ eagain_ifuture<std::pair<Ref<Node>, Ref<Node>>> InternalNode::get_child_peers(
     }
   }
 
-  return eagain_iertr::now().si_then([this, c, prev_pos, prev_p_child_addr] {
+  return eagain_iertr::now().safe_then([this, c, prev_pos, prev_p_child_addr] {
     if (prev_p_child_addr != nullptr) {
       return get_or_track_child(c, prev_pos, prev_p_child_addr->value);
     } else {
       return eagain_iertr::make_ready_future<Ref<Node>>();
     }
-  }).si_then([this, c, next_pos, next_p_child_addr] (Ref<Node> lnode) {
+  }).safe_then([this, c, next_pos, next_p_child_addr] (Ref<Node> lnode) {
     if (next_p_child_addr != nullptr) {
       return get_or_track_child(c, next_pos, next_p_child_addr->value
-      ).si_then([lnode] (Ref<Node> rnode) {
+      ).safe_then([lnode] (Ref<Node> rnode) {
         return seastar::make_ready_future<std::pair<Ref<Node>, Ref<Node>>>(
             lnode, rnode);
       });
@@ -1237,7 +1237,7 @@ eagain_ifuture<Ref<InternalNode>> InternalNode::allocate_root(
   // support tree height up to 256
   ceph_assert(old_root_level < MAX_LEVEL);
   return InternalNode::allocate(c, hint, field_type_t::N0, true, old_root_level + 1
-  ).si_then([c, old_root_addr,
+  ).safe_then([c, old_root_addr,
                super = std::move(super)](auto fresh_node) mutable {
     auto root = fresh_node.node;
     assert(root->impl->is_keys_empty());
@@ -1258,7 +1258,7 @@ InternalNode::lookup_smallest(context_t c)
   const laddr_packed_t* p_child_addr;
   impl->get_slot(position, nullptr, &p_child_addr);
   return get_or_track_child(c, position, p_child_addr->value
-  ).si_then([c](auto child) {
+  ).safe_then([c](auto child) {
     return child->lookup_smallest(c);
   });
 }
@@ -1272,7 +1272,7 @@ InternalNode::lookup_largest(context_t c)
   assert(impl->is_level_tail());
   auto p_child_addr = impl->get_tail_value();
   return get_or_track_child(c, search_position_t::end(), p_child_addr->value
-  ).si_then([c](auto child) {
+  ).safe_then([c](auto child) {
     return child->lookup_largest(c);
   });
 }
@@ -1291,7 +1291,7 @@ InternalNode::lower_bound_tracked(
   auto result = impl->lower_bound(key, history);
 #endif
   return get_or_track_child(c, result.position, result.p_value->value
-  ).si_then([c, &key, &history](auto child) {
+  ).safe_then([c, &key, &history](auto child) {
     // XXX(multi-type): pass result.mstat to child
     return child->lower_bound_tracked(c, key, history);
   });
@@ -1316,13 +1316,13 @@ eagain_ifuture<> InternalNode::do_get_tree_stats(
     [this, this_ref, c, &stats](auto& pos, auto& p_child_addr) {
       pos = search_position_t::begin();
       impl->get_slot(pos, nullptr, &p_child_addr);
-      return trans_intr::repeat(
+      return crimson::repeat(
         [this, this_ref, c, &stats, &pos, &p_child_addr]()
         -> eagain_ifuture<seastar::stop_iteration> {
         return get_or_track_child(c, pos, p_child_addr->value
-        ).si_then([c, &stats](auto child) {
+        ).safe_then([c, &stats](auto child) {
           return child->do_get_tree_stats(c, stats);
-        }).si_then([this, this_ref, &pos, &p_child_addr] {
+        }).safe_then([this, this_ref, &pos, &p_child_addr] {
           if (pos.is_end()) {
             return seastar::stop_iteration::yes;
           } else {
@@ -1408,23 +1408,23 @@ eagain_ifuture<> InternalNode::test_clone_root(
   return InternalNode::allocate(
     c_other, laddr_hint_t::create_global_md_hint(),
     field_type_t::N0, true, impl->level()
-  ).si_then([this, c_other, &tracker_other](auto fresh_other) {
+  ).safe_then([this, c_other, &tracker_other](auto fresh_other) {
     impl->test_copy_to(fresh_other.mut);
     auto cloned_root = fresh_other.node;
     return c_other.nm.get_super(c_other.t, tracker_other
-    ).handle_error_interruptible(
+    ).handle_error(
       eagain_iertr::pass_further{},
       crimson::ct_error::assert_all("Invalid error during test clone")
-    ).si_then([c_other, cloned_root](auto&& super_other) {
+    ).safe_then([c_other, cloned_root](auto&& super_other) {
       assert(super_other);
       cloned_root->make_root_new(c_other, std::move(super_other));
       return cloned_root;
     });
-  }).si_then([this_ref, this, c_other](auto cloned_root) {
+  }).safe_then([this_ref, this, c_other](auto cloned_root) {
     // clone tracked children
     // In some unit tests, the children are stubbed out that they
     // don't exist in NodeExtentManager, and are only tracked in memory.
-    return trans_intr::do_for_each(
+    return crimson::do_for_each(
       tracked_child_nodes.begin(),
       tracked_child_nodes.end(),
       [this_ref, c_other, cloned_root](auto& kv) {
@@ -1450,7 +1450,7 @@ eagain_ifuture<> InternalNode::try_downgrade_root(
   // proceed downgrade root to the only child
   laddr_t child_addr = impl->get_tail_value()->value;
   return get_or_track_child(c, search_position_t::end(), child_addr
-  ).si_then([c, this, FNAME,
+  ).safe_then([c, this, FNAME,
                this_ref = std::move(this_ref)] (auto child) mutable {
     INFOT("downgrade {} to new root {}",
           c.t, get_name(), child->get_name());
@@ -1528,10 +1528,10 @@ eagain_ifuture<Ref<InternalNode>> InternalNode::insert_or_split(
     right_hint = right_key.create_onode_hint();
   }
   return (is_root() ? upgrade_root(c, left_hint) : eagain_iertr::now()
-  ).si_then([this, c, right_hint] {
+  ).safe_then([this, c, right_hint] {
     return InternalNode::allocate(
         c, right_hint, impl->field_type(), impl->is_level_tail(), impl->level());
-  }).si_then([this, insert_key, insert_child, insert_pos,
+  }).safe_then([this, insert_key, insert_child, insert_pos,
                 insert_stage=insert_stage, insert_size=insert_size,
                 outdated_child, c, FNAME](auto fresh_right) mutable {
     // I'm the left_node and need to split into the right_node
@@ -1593,7 +1593,7 @@ eagain_ifuture<Ref<Node>> InternalNode::get_or_track_child(
            c.t, position, child_addr);
     bool level_tail = position.is_end();
     return Node::load(c, child_addr, level_tail
-    ).si_then([this, position, c, FNAME] (auto child) {
+    ).safe_then([this, position, c, FNAME] (auto child) {
       TRACET("loaded child untracked {}",
              c.t, child->get_name());
       if (child->level() + 1 != level()) {
@@ -1604,7 +1604,7 @@ eagain_ifuture<Ref<Node>> InternalNode::get_or_track_child(
       child->as_child(position, this);
       return child;
     });
-  }().si_then([this_ref, this, position, child_addr] (auto child) {
+  }().safe_then([this_ref, this, position, child_addr] (auto child) {
     assert(child_addr == child->impl->laddr());
     assert(position == child->parent_info().position);
     std::ignore = position;
@@ -1777,7 +1777,7 @@ eagain_ifuture<InternalNode::fresh_node_t> InternalNode::allocate(
     context_t c, laddr_hint_t hint, field_type_t field_type, bool is_level_tail, level_t level)
 {
   return InternalNodeImpl::allocate(c, hint, field_type, is_level_tail, level
-  ).si_then([](auto&& fresh_impl) {
+  ).safe_then([](auto&& fresh_impl) {
     auto *derived_ptr = fresh_impl.impl.get();
     auto node = Ref<InternalNode>(new InternalNode(
           derived_ptr, std::move(fresh_impl.impl)));
@@ -1855,19 +1855,19 @@ LeafNode::erase(context_t c, const search_position_t& pos, bool get_next)
   ++(c.t.get_onode_tree_stats().num_erases);
 
   // get the next cursor
-  return eagain_iertr::now().si_then([c, &pos, get_next, this] {
+  return eagain_iertr::now().safe_then([c, &pos, get_next, this] {
     if (get_next) {
       return get_next_cursor(c, pos);
     } else {
       return eagain_iertr::make_ready_future<Ref<tree_cursor_t>>();
     }
-  }).si_then([c, &pos, this_ref = std::move(this_ref),
+  }).safe_then([c, &pos, this_ref = std::move(this_ref),
                 this, FNAME] (Ref<tree_cursor_t> next_cursor) mutable {
     if (next_cursor && next_cursor->is_end()) {
       // reset the node reference from the end cursor
       next_cursor.reset();
     }
-    return eagain_iertr::now().si_then(
+    return eagain_iertr::now().safe_then(
         [c, &pos, this_ref = std::move(this_ref), this, FNAME] () mutable {
       assert_moveable(this_ref);
 #ifndef NDEBUG
@@ -1911,7 +1911,7 @@ LeafNode::erase(context_t c, const search_position_t& pos, bool get_next)
         return try_merge_adjacent<FORCE_MERGE>(
             c, update_parent_index, std::move(this_ref));
       }
-    }).si_then([next_cursor] {
+    }).safe_then([next_cursor] {
       return next_cursor;
     });
   });
@@ -2064,18 +2064,18 @@ eagain_ifuture<> LeafNode::test_clone_root(
   Ref<const Node> this_ref = this;
   return LeafNode::allocate(
     c_other, laddr_hint_t::create_global_md_hint(), field_type_t::N0, true
-  ).si_then([this, c_other, &tracker_other](auto fresh_other) {
+  ).safe_then([this, c_other, &tracker_other](auto fresh_other) {
     impl->test_copy_to(fresh_other.mut);
     auto cloned_root = fresh_other.node;
     return c_other.nm.get_super(c_other.t, tracker_other
-    ).handle_error_interruptible(
+    ).handle_error(
       eagain_iertr::pass_further{},
       crimson::ct_error::assert_all("Invalid error during test clone")
-    ).si_then([c_other, cloned_root](auto&& super_other) {
+    ).safe_then([c_other, cloned_root](auto&& super_other) {
       assert(super_other);
       cloned_root->make_root_new(c_other, std::move(super_other));
     });
-  }).si_then([this_ref]{});
+  }).safe_then([this_ref]{});
 }
 
 eagain_ifuture<Ref<tree_cursor_t>> LeafNode::insert_value(
@@ -2121,9 +2121,9 @@ eagain_ifuture<Ref<tree_cursor_t>> LeafNode::insert_value(
     right_hint = right_key.create_onode_hint();
   }
   return (is_root() ? upgrade_root(c, left_hint) : eagain_iertr::now()
-  ).si_then([this, c, right_hint] {
+  ).safe_then([this, c, right_hint] {
     return LeafNode::allocate(c, right_hint, impl->field_type(), impl->is_level_tail());
-  }).si_then([this_ref = std::move(this_ref), this, c, &key, vconf, FNAME,
+  }).safe_then([this_ref = std::move(this_ref), this, c, &key, vconf, FNAME,
                 insert_pos, insert_stage=insert_stage, insert_size=insert_size](auto fresh_right) mutable {
     auto right_node = fresh_right.node;
     DEBUGT("proceed split {} to fresh {} ...",
@@ -2148,7 +2148,7 @@ eagain_ifuture<Ref<tree_cursor_t>> LeafNode::insert_value(
     ++(c.t.get_onode_tree_stats().extents_num_delta);
     return apply_split_to_parent(
         c, std::move(this_ref), std::move(right_node), false
-    ).si_then([ret] {
+    ).safe_then([ret] {
       return ret;
     });
     // TODO (optimize)
@@ -2162,14 +2162,14 @@ eagain_ifuture<Ref<LeafNode>> LeafNode::allocate_root(
   LOG_PREFIX(OTree::LeafNode::allocate_root);
   return LeafNode::allocate(
     c, laddr_hint_t::create_global_md_hint(), field_type_t::N0, true
-  ).si_then([c, &root_tracker, FNAME](auto fresh_node) {
+  ).safe_then([c, &root_tracker, FNAME](auto fresh_node) {
     auto root = fresh_node.node;
     return c.nm.get_super(c.t, root_tracker
-    ).handle_error_interruptible(
+    ).handle_error(
       eagain_iertr::pass_further{},
       crimson::ct_error::input_output_error::assert_failure(
         "{} EIO during get_super()", FNAME)
-    ).si_then([c, root](auto&& super) {
+    ).safe_then([c, root](auto&& super) {
       assert(super);
       root->make_root_new(c, std::move(super));
       return root;
@@ -2286,7 +2286,7 @@ eagain_ifuture<LeafNode::fresh_node_t> LeafNode::allocate(
     context_t c, laddr_hint_t hint, field_type_t field_type, bool is_level_tail)
 {
   return LeafNodeImpl::allocate(c, hint, field_type, is_level_tail
-  ).si_then([](auto&& fresh_impl) {
+  ).safe_then([](auto&& fresh_impl) {
     auto *derived_ptr = fresh_impl.impl.get();
     auto node = Ref<LeafNode>(new LeafNode(
           derived_ptr, std::move(fresh_impl.impl)));

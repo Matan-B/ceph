@@ -37,14 +37,14 @@ LogManager::initialize_omap(
   DEBUGT("hint: {}", t, hint);
   auto extent = co_await tm.alloc_non_data_extent<LogNode>(
     t, hint, LOG_NODE_BLOCK_SIZE
-  ).handle_error_interruptible(
+  ).handle_error(
     crimson::ct_error::enospc::assert_failure("unexpected enospc"),
     TransactionManager::alloc_extent_iertr::pass_further{}
   );
   // for dup list
   auto d_extent = co_await tm.alloc_non_data_extent<LogNode>(
     t, hint, LOG_NODE_BLOCK_SIZE
-  ).handle_error_interruptible(
+  ).handle_error(
     crimson::ct_error::enospc::assert_failure("unexpected enospc"),
     TransactionManager::alloc_extent_iertr::pass_further{}
   );
@@ -103,10 +103,10 @@ LogManager::omap_set_keys(
     -> omap_set_key_iertr::future<LogNodeRef> {
     return tm.alloc_non_data_extent<LogNode>(
       t, log_root.hint, LOG_NODE_BLOCK_SIZE
-    ).handle_error_interruptible(
+    ).handle_error(
       crimson::ct_error::enospc::assert_failure("unexpected enospc"),
       omap_set_key_iertr::pass_further{}
-    ).si_then([prev_laddr](auto ext) {
+    ).safe_then([prev_laddr](auto ext) {
       assert(ext);
       ext->set_prev_addr(prev_laddr);
       return omap_set_key_iertr::make_ready_future<LogNodeRef>(ext);
@@ -341,7 +341,7 @@ LogManager::_log_set_multi_block_key(omap_root_t &log_root,
       ceph::bufferlist chunk;
     auto extent = co_await tm.alloc_non_data_extent<LogNode>(
       t, log_root.hint, LOG_NODE_BLOCK_SIZE
-    ).handle_error_interruptible(
+    ).handle_error(
       crimson::ct_error::enospc::assert_failure("unexpected enospc"),
       omap_set_key_iertr::pass_further{}
     );
@@ -384,7 +384,7 @@ LogManager::_log_set_key(omap_root_t &log_root,
 
   auto extent = co_await tm.alloc_non_data_extent<LogNode>(
     t, log_root.hint, LOG_NODE_BLOCK_SIZE
-  ).handle_error_interruptible(
+  ).handle_error(
     crimson::ct_error::enospc::assert_failure("unexpected enospc"),
     omap_set_key_iertr::pass_further{}
   );
@@ -446,7 +446,7 @@ LogManager::log_load_extent(
       assert(!extent.is_seen_by_users());
       extent.init_range(std::move(begin), std::move(end));
     }
-  ).handle_error_interruptible(
+  ).handle_error(
     log_load_extent_iertr::pass_further{},
     crimson::ct_error::assert_all( "Invalid error in log_load_extent" )
   );
@@ -610,7 +610,7 @@ LogManager::remove_node(Transaction &t, LogNodeRef mut, LogNodeRef next)
   DEBUGT("mut={}, next={}", t, *mut, *next);
   laddr_t prev_addr = mut->get_prev_addr();
   co_await tm.remove(t, mut->get_laddr()
-  ).handle_error_interruptible(
+  ).handle_error(
     omap_rm_key_iertr::pass_further{},
     crimson::ct_error::assert_all("Invalid error in remove_node")
   );
@@ -944,12 +944,12 @@ LogManager::omap_clear(omap_root_t &root, Transaction &t)
     std::optional<std::string>(),
     std::optional<std::string>(std::nullopt), nullptr);
   co_await tm.remove(t, co_await get_dup_addr_from_root(t, root.addr)
-  ).handle_error_interruptible(
+  ).handle_error(
     omap_clear_iertr::pass_further{},
     crimson::ct_error::assert_all("Invalid error in omap_clear")
   );
   co_await tm.remove(t, root.get_location()
-  ).handle_error_interruptible(
+  ).handle_error(
     omap_clear_iertr::pass_further{},
     crimson::ct_error::assert_all("Invalid error in omap_clear")
   );

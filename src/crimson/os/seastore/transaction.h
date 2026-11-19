@@ -105,6 +105,10 @@ struct btree_cursor_stats_t {
  *
  * Representation of in-progress mutation. Used exclusively through Cache methods.
  *
+ * A transaction is never interrupted (see seastore_types.h): writers can't
+ * conflict, as there is a single writer per shard, and READ transactions
+ * restart explicitly with eagain from Cache::access_extent().
+ *
  * Transaction log levels:
  * seastore_t
  * - DEBUG: transaction create, commit events
@@ -409,14 +413,6 @@ public:
     return weak;
   }
 
-  void test_set_conflict() {
-    conflicted = true;
-  }
-
-  bool is_conflicted() const {
-    return conflicted;
-  }
-
   /// Stable extents this (writer) transaction mutated in place, see
   /// CachedExtent::inplace_writer and Cache::duplicate_for_write().
   void add_inplace_mutated_extent(CachedExtentRef ref) {
@@ -523,7 +519,6 @@ public:
   }
 
   friend class crimson::os::seastore::SeaStore;
-  friend class TransactionConflictCondition;
 
   uint64_t write_hit_hot = 0;
   uint64_t write_hit_cold = 0;
@@ -771,8 +766,6 @@ private:
   tree_stats_t backref_tree_stats;
   ool_write_stats_t ool_write_stats;
   rewrite_stats_t rewrite_stats;
-
-  bool conflicted = false;
 
   phase_durations_t phase_durations;
 

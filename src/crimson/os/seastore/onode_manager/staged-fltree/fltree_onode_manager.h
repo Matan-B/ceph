@@ -431,14 +431,14 @@ class FLTreeOnodeManager : public crimson::os::seastore::OnodeManager {
     if (cid == coll_t::meta()) {
       return coll_exists_iertr::make_ready_future<bool>(true);
     }
-    return tm.read_collection_root(t).si_then([this, &t](auto coll_root) {
+    return tm.read_collection_root(t).safe_then([this, &t](auto coll_root) {
       return collection_manager.get_coll_node(coll_root, t);
-    }).handle_error_interruptible(
+    }).handle_error(
       coll_exists_iertr::pass_further{},
       crimson::ct_error::assert_all(
         "FLTreeOnodeManager::collection_exists: unexpected error reading "
         "collection node")
-    ).si_then([cid](auto coll_node) {
+    ).safe_then([cid](auto coll_node) {
       return coll_node->contains(cid);
     });
   }

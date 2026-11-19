@@ -76,12 +76,12 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
       extent_size = c.vb.get_internal_node_size();
     }
     return c.nm.alloc_extent(c.t, hint, extent_size
-    ).handle_error_interruptible(
+    ).handle_error(
       eagain_iertr::pass_further{},
       crimson::ct_error::input_output_error::assert_failure(
         "{} extent_size={}, is_level_tail={}, level={}",
         FNAME, extent_size, is_level_tail, level)
-    ).si_then([is_level_tail, level](auto extent) {
+    ).safe_then([is_level_tail, level](auto extent) {
       assert(extent);
       assert(extent->is_initial_pending());
       auto mut = extent->get_mutable();
@@ -310,7 +310,7 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
     stage_t::template get_slot<true, false>(
         extent.read(), position_t::begin(), &first_index, nullptr);
     auto hint = first_index.create_onode_hint();
-    return extent.rebuild(c, hint).si_then([this] (auto mut) {
+    return extent.rebuild(c, hint).safe_then([this] (auto mut) {
       // addr may change
       build_name();
       return mut;
